@@ -200,6 +200,20 @@ class DatabaseService {
         ORDER BY TABLE_NAME, ORDINAL_POSITION
       `, [databaseName]);
 
+      // Get ALL indexes in ONE query
+      const [allIndexes] = await connection.query(`
+        SELECT
+          TABLE_NAME as tableName,
+          INDEX_NAME as name,
+          COLUMN_NAME as columnName,
+          NON_UNIQUE as nonUnique,
+          SEQ_IN_INDEX as seq,
+          INDEX_TYPE as indexType
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = ?
+        ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
+      `, [databaseName]);
+
       // Group columns by table
       const columnsByTable = new Map();
       (allColumnsResult as any[]).forEach(col => {
@@ -230,11 +244,44 @@ class DatabaseService {
         constraint.referencedColumns.push(fk.referencedColumn);
       });
 
-      // Process table data (no CREATE TABLE statements for performance)
+      // Group indexes by table
+      const indexesByTable = new Map();
+      (allIndexes as any[]).forEach(idx => {
+        if (!indexesByTable.has(idx.tableName)) {
+          indexesByTable.set(idx.tableName, new Map());
+        }
+        const tableIndexes = indexesByTable.get(idx.tableName);
+        if (!tableIndexes.has(idx.name)) {
+          tableIndexes.set(idx.name, {
+            name: idx.name,
+            unique: idx.nonUnique === 0,
+            indexType: idx.indexType,
+            columns: []
+          });
+        }
+        const index = tableIndexes.get(idx.name);
+        index.columns.push(idx.columnName);
+      });
+
+      // Get CREATE TABLE statements for all tables (for full schema including FK and indexes)
+      const tableDefinitions = new Map();
+      for (const table of (tablesResult as any[])) {
+        try {
+          const [createResult] = await connection.query(`SHOW CREATE TABLE \`${table.name}\``);
+          const createDef = (createResult as any)[0]['Create Table'];
+          tableDefinitions.set(table.name, createDef);
+        } catch (err) {
+          console.error(`Failed to get CREATE TABLE for ${table.name}:`, err);
+        }
+      }
+
+      // Process table data (WITH CREATE TABLE statements for deployments)
       const tables = tablesResult as any[];
       const enhancedTables = tables.map((table) => {
         const columns = columnsByTable.get(table.name) || [];
         const tableConstraints = constraintsByTable.get(table.name);
+        const tableIndexes = indexesByTable.get(table.name);
+        const tableDef = tableDefinitions.get(table.name);
 
         return {
           name: table.name,
@@ -245,6 +292,7 @@ class DatabaseService {
           engine: table.engine,
           collation: table.collation,
           comment: table.comment,
+          definition: tableDef,  // SHOW CREATE TABLE statement
           columns: columns.map((col: any) => ({
             name: col.name,
             dataType: col.dataType,
@@ -259,33 +307,90 @@ class DatabaseService {
             scale: col.scale,
             comment: col.comment
           })),
-          constraints: tableConstraints ? Array.from(tableConstraints.values()) : []
+          constraints: tableConstraints ? Array.from(tableConstraints.values()) : [],
+          indexes: tableIndexes ? Array.from(tableIndexes.values()) : []
         };
       });
 
-      // Process database objects (no definitions for performance - fetch on demand)
-      const proceduresWithDef = (proceduresResult as any[]).map(proc => ({
-        name: proc.name,
-        parameterCount: 0,
-        lastModified: new Date()
+      // Process database objects (WITH definitions for deployment scripts)
+      const proceduresWithDef = await Promise.all((proceduresResult as any[]).map(async (proc) => {
+        try {
+          const [createResult] = await connection.query(`SHOW CREATE PROCEDURE \`${proc.name}\``);
+          const createDef = (createResult as any)[0]['Create Procedure'];
+          return {
+            name: proc.name,
+            parameterCount: 0,
+            lastModified: new Date(),
+            definition: createDef
+          };
+        } catch (err) {
+          console.error(`Failed to get CREATE PROCEDURE for ${proc.name}:`, err);
+          return {
+            name: proc.name,
+            parameterCount: 0,
+            lastModified: new Date()
+          };
+        }
       }));
 
-      const viewsWithDef = (viewsResult as any[]).map(view => ({
-        name: view.name,
-        dependencies: [],
-        hasTriggers: false
+      const viewsWithDef = await Promise.all((viewsResult as any[]).map(async (view) => {
+        try {
+          const [createResult] = await connection.query(`SHOW CREATE VIEW \`${view.name}\``);
+          const createDef = (createResult as any)[0]['Create View'];
+          return {
+            name: view.name,
+            dependencies: [],
+            hasTriggers: false,
+            definition: createDef
+          };
+        } catch (err) {
+          console.error(`Failed to get CREATE VIEW for ${view.name}:`, err);
+          return {
+            name: view.name,
+            dependencies: [],
+            hasTriggers: false
+          };
+        }
       }));
 
-      const functionsWithDef = (functionsResult as any[]).map(func => ({
-        name: func.name,
-        type: 'scalar' as const,
-        parameterCount: 0
+      const functionsWithDef = await Promise.all((functionsResult as any[]).map(async (func) => {
+        try {
+          const [createResult] = await connection.query(`SHOW CREATE FUNCTION \`${func.name}\``);
+          const createDef = (createResult as any)[0]['Create Function'];
+          return {
+            name: func.name,
+            type: 'scalar' as const,
+            parameterCount: 0,
+            definition: createDef
+          };
+        } catch (err) {
+          console.error(`Failed to get CREATE FUNCTION for ${func.name}:`, err);
+          return {
+            name: func.name,
+            type: 'scalar' as const,
+            parameterCount: 0
+          };
+        }
       }));
 
-      const triggersWithDef = (triggersResult as any[]).map(trigger => ({
-        name: trigger.name,
-        type: 'insert' as const,
-        associatedTable: trigger.table
+      const triggersWithDef = await Promise.all((triggersResult as any[]).map(async (trigger) => {
+        try {
+          const [createResult] = await connection.query(`SHOW CREATE TRIGGER \`${trigger.name}\``);
+          const createDef = (createResult as any)[0]['SQL Original Statement'];
+          return {
+            name: trigger.name,
+            type: 'insert' as const,
+            associatedTable: trigger.table,
+            definition: createDef
+          };
+        } catch (err) {
+          console.error(`Failed to get CREATE TRIGGER for ${trigger.name}:`, err);
+          return {
+            name: trigger.name,
+            type: 'insert' as const,
+            associatedTable: trigger.table
+          };
+        }
       }));
 
       await connection.end();
@@ -904,32 +1009,19 @@ class DatabaseService {
     const errors: Array<{ statement: string; error: string }> = [];
 
     try {
-      // Split script into individual statements
-      const statements = script
-        .split(';')
-        .map(s => s.trim())
-        .filter(s => s.length > 0 && !s.startsWith('--'));
+      console.log(`Executing deployment script (${script.length} characters)...`);
 
-      console.log(`Executing ${statements.length} deployment statements...`);
-
-      for (let i = 0; i < statements.length; i++) {
-        const statement = statements[i];
-
-        // Skip comments
-        if (statement.startsWith('--') || statement.length === 0) {
-          continue;
-        }
-
-        try {
-          await connection.query(statement + ';');
-          console.log(`✓ Statement ${i + 1}/${statements.length} executed successfully`);
-        } catch (error: any) {
-          console.error(`✗ Statement ${i + 1}/${statements.length} failed: ${error.message}`);
-          errors.push({
-            statement: statement.substring(0, 100) + '...',
-            error: error.message
-          });
-        }
+      // Execute the entire script at once with multipleStatements enabled
+      // This properly handles triggers, procedures, functions with DELIMITER changes
+      try {
+        await connection.query(script);
+        console.log(`✓ Deployment script executed successfully`);
+      } catch (error: any) {
+        console.error(`✗ Deployment script failed: ${error.message}`);
+        errors.push({
+          statement: 'Deployment script',
+          error: error.message
+        });
       }
 
       await connection.end();

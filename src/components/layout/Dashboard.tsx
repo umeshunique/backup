@@ -138,7 +138,7 @@ export function Dashboard() {
   const todayObjects = getTodayCreatedObjects();
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       {/* Empty State - No Servers */}
       {servers.length === 0 && (
         <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">

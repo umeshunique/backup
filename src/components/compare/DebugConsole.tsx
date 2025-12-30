@@ -70,7 +70,7 @@ console.warn = (...args: any[]) => {
   });
 };
 
-export function DebugConsole({ onClose }: { onClose: () => void }) {
+export function DebugConsole({ onClose }: { onClose?: () => void }) {
   const [logs, setLogs] = useState<ConsoleLog[]>(globalLogs);
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
 
@@ -104,8 +104,8 @@ export function DebugConsole({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Card className={`fixed bottom-4 left-64 w-[600px] z-50 shadow-2xl transition-all ${
-      isCollapsed ? 'max-h-[60px]' : 'max-h-[500px]'
+    <Card className={`transition-all ${
+      isCollapsed ? 'max-h-[60px]' : 'max-h-[600px]'
     }`}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
@@ -124,14 +124,16 @@ export function DebugConsole({ onClose }: { onClose: () => void }) {
             <Button variant="ghost" size="sm" onClick={() => setIsCollapsed(!isCollapsed)}>
               {isCollapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             </Button>
-            <Button variant="ghost" size="sm" onClick={onClose}>
-              <X className="h-4 w-4" />
-            </Button>
+            {onClose && (
+              <Button variant="ghost" size="sm" onClick={onClose}>
+                <X className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         </div>
       </CardHeader>
       {!isCollapsed && (
-        <CardContent className="p-3 max-h-[400px] overflow-y-auto">
+        <CardContent className="p-3 max-h-[500px] overflow-y-auto">
           <div className="space-y-2 font-mono text-xs">
             {logs.length === 0 ? (
               <div className="text-muted-foreground text-center py-8">

@@ -12,6 +12,7 @@ import {
   Server,
   Package,
   Rocket,
+  Bug,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -42,6 +43,7 @@ const menuSections = [
     title: 'Other',
     items: [
       { id: 'history' as const, label: 'History', icon: History },
+      { id: 'console' as const, label: 'Debug Console', icon: Bug },
       { id: 'settings' as const, label: 'Settings', icon: Settings },
     ]
   }

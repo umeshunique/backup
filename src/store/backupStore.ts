@@ -26,7 +26,7 @@ interface BackupStore {
   // UI State
   selectedServerId: string | null;
   selectedDatabaseName: string | null;
-  activeTab: 'dashboard' | 'servers' | 'backup' | 'restore' | 'history' | 'settings' | 'compare' | 'release' | 'builds';
+  activeTab: 'dashboard' | 'servers' | 'backup' | 'restore' | 'history' | 'settings' | 'compare' | 'release' | 'builds' | 'console';
 
   // Schema Comparison State
   comparisonResult: SchemaComparisonResult | null;
@@ -744,6 +744,65 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
             });
             script += '\n';
           }
+
+          // Handle Foreign Key differences
+          const sourceFKs = diff.sourceMetadata?.constraints || [];
+          const targetFKs = diff.targetMetadata?.constraints || [];
+          const sourceFKMap = new Map(sourceFKs.map((fk: any) => [fk.name, fk]));
+          const targetFKMap = new Map(targetFKs.map((fk: any) => [fk.name, fk]));
+
+          // FKs to add (in source but not in target)
+          const fksToAdd = sourceFKs.filter((fk: any) => !targetFKMap.has(fk.name));
+          if (fksToAdd.length > 0) {
+            script += `-- Add Foreign Keys:\n`;
+            fksToAdd.forEach((fk: any) => {
+              const columns = fk.columns.join('`, `');
+              const refColumns = fk.referencedColumns.join('`, `');
+              script += `ALTER TABLE \`${diff.name}\` ADD CONSTRAINT \`${fk.name}\` FOREIGN KEY (\`${columns}\`) REFERENCES \`${fk.referencedTable}\` (\`${refColumns}\`);\n`;
+            });
+            script += '\n';
+          }
+
+          // FKs to drop (in target but not in source - commented for safety)
+          const fksToDrop = targetFKs.filter((fk: any) => !sourceFKMap.has(fk.name));
+          if (fksToDrop.length > 0) {
+            script += `-- Drop Foreign Keys (uncomment to drop):\n`;
+            fksToDrop.forEach((fk: any) => {
+              script += `-- ALTER TABLE \`${diff.name}\` DROP FOREIGN KEY \`${fk.name}\`;\n`;
+            });
+            script += '\n';
+          }
+
+          // Handle Index differences
+          const sourceIndexes = diff.sourceMetadata?.indexes || [];
+          const targetIndexes = diff.targetMetadata?.indexes || [];
+          const sourceIdxMap = new Map(sourceIndexes.map((idx: any) => [idx.name, idx]));
+          const targetIdxMap = new Map(targetIndexes.map((idx: any) => [idx.name, idx]));
+
+          // Indexes to add (in source but not in target)
+          const indexesToAdd = sourceIndexes.filter((idx: any) => !targetIdxMap.has(idx.name) && idx.name !== 'PRIMARY');
+          if (indexesToAdd.length > 0) {
+            script += `-- Add Indexes:\n`;
+            indexesToAdd.forEach((idx: any) => {
+              const columns = idx.columns.map((c: string) => `\`${c}\``).join(', ');
+              if (idx.unique) {
+                script += `ALTER TABLE \`${diff.name}\` ADD UNIQUE INDEX \`${idx.name}\` (${columns});\n`;
+              } else {
+                script += `ALTER TABLE \`${diff.name}\` ADD INDEX \`${idx.name}\` (${columns});\n`;
+              }
+            });
+            script += '\n';
+          }
+
+          // Indexes to drop (in target but not in source - commented for safety)
+          const indexesToDrop = targetIndexes.filter((idx: any) => !sourceIdxMap.has(idx.name) && idx.name !== 'PRIMARY');
+          if (indexesToDrop.length > 0) {
+            script += `-- Drop Indexes (uncomment to drop):\n`;
+            indexesToDrop.forEach((idx: any) => {
+              script += `-- ALTER TABLE \`${diff.name}\` DROP INDEX \`${idx.name}\`;\n`;
+            });
+            script += '\n';
+          }
         } else {
           // For non-table objects (procedures, views, functions, triggers), drop and recreate
           script += `DROP ${type.toUpperCase()} IF EXISTS ${diff.name};\n\n`;
@@ -947,12 +1006,18 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
     // Filter comparisons based on comparisonType
     switch (comparisonType) {
       case 'structure':
-        // Only compare table structures (not data)
+        // Compare ALL structure (tables, procedures, views, functions, triggers, events) - NO data
         tableDiffs = compareObjects(sourceSchema.tables, targetSchema.tables, 'table');
+        procedureDiffs = compareObjects(sourceSchema.procedures, targetSchema.procedures, 'procedure');
+        viewDiffs = compareObjects(sourceSchema.views, targetSchema.views, 'view');
+        functionDiffs = compareObjects(sourceSchema.functions, targetSchema.functions, 'function');
+        triggerDiffs = compareObjects(sourceSchema.triggers, targetSchema.triggers, 'trigger');
+        eventDiffs = compareObjects(sourceSchema.events, targetSchema.events, 'event');
         break;
       case 'data':
-        // Only compare data (not implemented yet, placeholder)
-        console.log('Data comparison not yet implemented');
+        // Only compare data (INSERT statements) - NO structure changes
+        // TODO: Implement data comparison - generate INSERT/UPDATE/DELETE statements
+        console.log('Data comparison - will generate INSERT statements for data differences');
         break;
       case 'tables':
         // Compare tables only
@@ -976,13 +1041,14 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
         break;
       case 'all':
       default:
-        // Compare everything
+        // Compare everything (structure + data)
         tableDiffs = compareObjects(sourceSchema.tables, targetSchema.tables, 'table');
         procedureDiffs = compareObjects(sourceSchema.procedures, targetSchema.procedures, 'procedure');
         viewDiffs = compareObjects(sourceSchema.views, targetSchema.views, 'view');
         functionDiffs = compareObjects(sourceSchema.functions, targetSchema.functions, 'function');
         triggerDiffs = compareObjects(sourceSchema.triggers, targetSchema.triggers, 'trigger');
         eventDiffs = compareObjects(sourceSchema.events, targetSchema.events, 'event');
+        // TODO: Add data comparison
         break;
     }
 
@@ -1149,17 +1215,17 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
     try {
       const targetServer = release.comparisonResult.targetServer;
 
-      // Step 1: Create pre-deployment backup
+      // Step 1: Deploying (backend will automatically create backup first)
       set((state) => ({
         releaseDeployments: state.releaseDeployments.map((r) =>
           r.id === releaseId
             ? {
                 ...r,
-                status: 'backing_up' as const,
+                status: 'deploying' as const,
                 startedAt: new Date(),
                 deploymentProgress: {
                   ...r.deploymentProgress,
-                  currentStep: 'Creating pre-deployment backup...',
+                  currentStep: 'Creating backup and deploying changes...',
                   completedSteps: 0,
                 },
               }
@@ -1167,85 +1233,16 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
         ),
         currentRelease: state.currentRelease ? {
           ...state.currentRelease,
-          status: 'backing_up',
+          status: 'deploying',
           startedAt: new Date(),
           deploymentProgress: {
             ...state.currentRelease.deploymentProgress,
-            currentStep: 'Creating pre-deployment backup...',
+            currentStep: 'Creating backup and deploying changes...',
           },
         } : null,
       }));
 
-      // Call backup API
-      const backupResult = await apiClient.executeBackup({
-        host: targetServer.host,
-        port: targetServer.port,
-        user: targetServer.username,
-        password: targetServer.password,
-        database: release.comparisonResult.targetDatabase,
-        type: targetServer.databaseType,
-        includeStructure: true,
-        includeData: true,
-        includeProcedures: true,
-        includeViews: true,
-        includeTriggers: true,
-        includeFunctions: true,
-      });
-
-      if (!backupResult.success) {
-        throw new Error('Pre-deployment backup failed');
-      }
-
-      // Update release with backup info
-      set((state) => ({
-        releaseDeployments: state.releaseDeployments.map((r) =>
-          r.id === releaseId
-            ? {
-                ...r,
-                preDeploymentBackup: {
-                  backupId: backupResult.data.fileName,
-                  backupPath: backupResult.data.path,
-                  createdAt: new Date(),
-                },
-              }
-            : r
-        ),
-        currentRelease: state.currentRelease ? {
-          ...state.currentRelease,
-          preDeploymentBackup: {
-            backupId: backupResult.data.fileName,
-            backupPath: backupResult.data.path,
-            createdAt: new Date(),
-          },
-        } : null,
-      }));
-
-      // Step 2: Deploy changes
-      set((state) => ({
-        releaseDeployments: state.releaseDeployments.map((r) =>
-          r.id === releaseId
-            ? {
-                ...r,
-                status: 'deploying' as const,
-                deploymentProgress: {
-                  ...r.deploymentProgress,
-                  currentStep: 'Deploying schema changes...',
-                  completedSteps: 1,
-                },
-              }
-            : r
-        ),
-        currentRelease: state.currentRelease ? {
-          ...state.currentRelease,
-          status: 'deploying',
-          deploymentProgress: {
-            ...state.currentRelease.deploymentProgress,
-            currentStep: 'Deploying schema changes...',
-          },
-        } : null,
-      }));
-
-      // Execute deployment script
+      // Execute deployment script (backend creates backup automatically)
       const deployResult = await apiClient.executeDeploymentScript({
         host: targetServer.host,
         port: targetServer.port,
@@ -1257,15 +1254,20 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
       });
 
       if (!deployResult.success) {
-        // Update release with deployment errors before rollback
+        // Save backup path for potential rollback
         set((state) => ({
           releaseDeployments: state.releaseDeployments.map((r) =>
             r.id === releaseId
               ? {
                   ...r,
+                  preDeploymentBackup: deployResult.backupPath ? {
+                    backupId: deployResult.backupPath,
+                    backupPath: deployResult.backupPath,
+                    createdAt: new Date(),
+                  } : undefined,
                   deploymentProgress: {
                     ...r.deploymentProgress,
-                    errors: deployResult.errors?.map(err => ({
+                    errors: deployResult.errors?.map((err: any) => ({
                       step: 'deployment',
                       objectName: err.statement,
                       error: err.error,
@@ -1282,7 +1284,7 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
         return;
       }
 
-      // Step 3: Mark as completed
+      // Step 2: Mark as completed with backup info
       set((state) => ({
         releaseDeployments: state.releaseDeployments.map((r) =>
           r.id === releaseId
@@ -1342,15 +1344,17 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
     try {
       const targetServer = release.comparisonResult.targetServer;
 
-      // Restore from backup
-      await apiClient.restoreBackup({
+      console.log('🔄 Rolling back deployment...');
+
+      // Restore from backup using new rollback API
+      await apiClient.rollbackDeployment({
         host: targetServer.host,
         port: targetServer.port,
         user: targetServer.username,
         password: targetServer.password,
         type: targetServer.databaseType,
         database: release.comparisonResult.targetDatabase,
-        backupFilePath: release.preDeploymentBackup.backupPath,
+        backupPath: release.preDeploymentBackup.backupPath,
       });
 
       set((state) => ({

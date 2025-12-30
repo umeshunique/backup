@@ -5,7 +5,7 @@ export class StorageController {
   // ============================================
   // SERVERS
   // ============================================
-  async getServers(req: Request, res: Response): Promise<void> {
+  async getServers(_req: Request, res: Response): Promise<void> {
     try {
       const servers = await storageService.getServers();
       res.json({ success: true, servers });
@@ -66,7 +66,7 @@ export class StorageController {
   // ============================================
   // BUILDS
   // ============================================
-  async getBuilds(req: Request, res: Response): Promise<void> {
+  async getBuilds(_req: Request, res: Response): Promise<void> {
     try {
       const builds = await storageService.getBuilds();
       res.json({ success: true, builds });
@@ -122,7 +122,7 @@ export class StorageController {
   // ============================================
   // RELEASES
   // ============================================
-  async getReleases(req: Request, res: Response): Promise<void> {
+  async getReleases(_req: Request, res: Response): Promise<void> {
     try {
       const releases = await storageService.getReleases();
       res.json({ success: true, releases });
@@ -178,7 +178,7 @@ export class StorageController {
   // ============================================
   // COMPARISONS
   // ============================================
-  async getComparisons(req: Request, res: Response): Promise<void> {
+  async getComparisons(_req: Request, res: Response): Promise<void> {
     try {
       const comparisons = await storageService.getComparisons();
       res.json({ success: true, comparisons });
@@ -223,7 +223,7 @@ export class StorageController {
   // ============================================
   // RESTORES
   // ============================================
-  async getRestores(req: Request, res: Response): Promise<void> {
+  async getRestores(_req: Request, res: Response): Promise<void> {
     try {
       const restores = await storageService.getRestores();
       res.json({ success: true, restores });

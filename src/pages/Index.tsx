@@ -6,6 +6,7 @@ import { SchemaCompare } from '@/components/compare';
 import { ReleaseManagement } from '@/components/release';
 import { ServersPage } from '@/components/server';
 import { BuildManagement } from '@/components/build';
+import { DebugConsolePage } from './DebugConsolePage';
 import { useBackupStore } from '@/store/backupStore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Settings, FolderOpen, Bell, Shield } from 'lucide-react';
@@ -68,12 +69,12 @@ const Index = () => {
   const { activeTab } = useBackupStore();
 
   return (
-    <div className="h-screen flex flex-col bg-background overflow-hidden">
+    <div className="h-screen flex flex-col bg-background">
       <Header />
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex min-h-0">
         <Sidebar />
-        <main className="flex-1 overflow-auto">
-          <div className="p-4 h-full">
+        <main className="flex-1 overflow-y-auto">
+          <div className="p-6 max-w-[1800px] mx-auto h-full">
             {activeTab === 'dashboard' && <Dashboard />}
             {activeTab === 'servers' && <ServersPage />}
             {activeTab === 'backup' && <BackupWizard />}
@@ -82,6 +83,7 @@ const Index = () => {
             {activeTab === 'release' && <ReleaseManagement />}
             {activeTab === 'builds' && <BuildManagement />}
             {activeTab === 'history' && <BackupHistoryTable />}
+            {activeTab === 'console' && <DebugConsolePage />}
             {activeTab === 'settings' && <SettingsPage />}
           </div>
         </main>

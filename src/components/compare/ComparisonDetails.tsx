@@ -9,7 +9,6 @@ import { Database, FileCode, Eye, Zap, Code2, Calendar, AlertCircle, CheckCircle
 import { cn } from '@/lib/utils';
 import { ObjectDetailView } from './ObjectDetailView';
 import { toast } from '@/hooks/use-toast';
-import { useBackupStore } from '@/store/backupStore';
 import { apiClient } from '@/services/apiClient';
 
 interface ComparisonDetailsProps {
@@ -36,7 +35,6 @@ export function ComparisonDetails({ result }: ComparisonDetailsProps) {
   const [activeTab, setActiveTab] = useState<ObjectType>('table');
   const [selectedObject, setSelectedObject] = useState<SchemaObjectDifference | null>(null);
   const [isDeploying, setIsDeploying] = useState(false);
-  const { servers } = useBackupStore();
 
   const handleDownloadAllScripts = () => {
     if (!result.deploymentScript) return;
@@ -75,52 +73,35 @@ export function ComparisonDetails({ result }: ComparisonDetailsProps) {
 
     setIsDeploying(true);
     try {
-      // Find target server
-      const targetServer = servers.find(s => s.id === result.targetServerId);
+      // Get target server from comparison result
+      const targetServer = result.targetServer;
       if (!targetServer) {
-        throw new Error('Target server not found');
+        throw new Error('Target server not found in comparison result');
       }
 
-      // Split the deployment script into individual statements
-      const statements = result.deploymentScript
-        .split(';')
-        .map(s => s.trim())
-        .filter(s => s && !s.startsWith('--') && s !== '');
+      // Use executeDeploymentScript API (creates backup automatically and supports multi-statement scripts)
+      const deployResult = await apiClient.executeDeploymentScript({
+        host: targetServer.host,
+        port: targetServer.port,
+        user: targetServer.username,
+        password: targetServer.password,
+        database: result.targetDatabase,
+        type: targetServer.databaseType,
+        script: result.deploymentScript
+      });
 
-      let successCount = 0;
-      let errorCount = 0;
-      const errors: string[] = [];
-
-      for (const statement of statements) {
-        try {
-          await apiClient.executeQuery({
-            host: targetServer.host,
-            port: targetServer.port,
-            user: targetServer.username,
-            password: targetServer.password,
-            database: result.targetDatabase,
-            type: targetServer.databaseType,
-            query: statement + ';'
-          });
-          successCount++;
-        } catch (error: any) {
-          errorCount++;
-          errors.push(`${statement.substring(0, 50)}...: ${error.message || error}`);
-        }
-      }
-
-      if (errorCount === 0) {
+      if (!deployResult.success) {
         toast({
-          title: "Success",
-          description: `Deployment completed successfully! ${successCount} statements executed.`,
-        });
-      } else {
-        toast({
-          title: "Partial Success",
-          description: `${successCount} statements succeeded, ${errorCount} failed. Check console for details.`,
+          title: "Deployment Failed",
+          description: `Deployment failed. Backup available at: ${deployResult.backupPath}`,
           variant: "destructive",
         });
-        console.error('Deployment errors:', errors);
+        console.error('Deployment errors:', deployResult.errors);
+      } else {
+        toast({
+          title: "Success",
+          description: `Deployment completed successfully! Backup at: ${deployResult.backupPath}`,
+        });
       }
     } catch (error: any) {
       toast({

@@ -265,12 +265,35 @@ export const apiClient = {
   }): Promise<{
     success: boolean;
     message: string;
+    backupPath?: string;
     errors?: Array<{
       statement: string;
       error: string;
     }>;
   }> {
     return apiRequest('/api/backup/execute-deployment', {
+      method: 'POST',
+      body: JSON.stringify(options),
+    });
+  },
+
+  /**
+   * Rollback deployment using backup
+   */
+  async rollbackDeployment(options: {
+    host: string;
+    port: number;
+    user: string;
+    password: string;
+    type: string;
+    database: string;
+    backupPath: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    error?: string;
+  }> {
+    return apiRequest('/api/backup/rollback-deployment', {
       method: 'POST',
       body: JSON.stringify(options),
     });

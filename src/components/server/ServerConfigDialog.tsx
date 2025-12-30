@@ -65,11 +65,11 @@ export function ServerConfigDialog({
     defaultValues: {
       name: '',
       environment: 'development',
-      host: '',
-      port: 3306,
+      host: import.meta.env.VITE_DB_HOST || 'localhost',
+      port: parseInt(import.meta.env.VITE_DB_PORT || '3306'),
       databaseType: 'mysql',
-      username: '',
-      password: '',
+      username: import.meta.env.VITE_DB_USER || '',
+      password: import.meta.env.VITE_DB_PASSWORD || '',
       isActive: true,
     },
   });
@@ -90,11 +90,11 @@ export function ServerConfigDialog({
       form.reset({
         name: '',
         environment: 'development',
-        host: '',
-        port: 3306,
+        host: import.meta.env.VITE_DB_HOST || 'localhost',
+        port: parseInt(import.meta.env.VITE_DB_PORT || '3306'),
         databaseType: 'mysql',
-        username: '',
-        password: '',
+        username: import.meta.env.VITE_DB_USER || '',
+        password: import.meta.env.VITE_DB_PASSWORD || '',
         isActive: true,
       });
     }

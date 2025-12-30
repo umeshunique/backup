@@ -4,11 +4,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Loader2, GitCompare, ArrowRight, AlertCircle, Bug } from 'lucide-react';
+import { Loader2, GitCompare, ArrowRight, AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ComparisonSummary } from './ComparisonSummary';
 import { ComparisonDetails } from './ComparisonDetails';
-import { DebugConsole } from './DebugConsole';
 
 export function SchemaCompare() {
   const {
@@ -25,7 +24,6 @@ export function SchemaCompare() {
   const [sourceDatabase, setSourceDatabase] = useState<string>('');
   const [targetServerId, setTargetServerId] = useState<string>('');
   const [targetDatabase, setTargetDatabase] = useState<string>('');
-  const [showDebugConsole, setShowDebugConsole] = useState<boolean>(true);
   const [comparisonType, setComparisonType] = useState<string>('all');
 
   const sourceDatabases = databaseSchemas[sourceServerId] || [];
@@ -67,18 +65,6 @@ export function SchemaCompare() {
         <p className="text-muted-foreground mt-2">
           Compare database schemas between source and target environments
         </p>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowDebugConsole(!showDebugConsole)}
-          className="gap-2"
-        >
-          <Bug className="h-4 w-4" />
-          {showDebugConsole ? 'Hide' : 'Show'} Debug Console
-        </Button>
       </div>
 
       {!comparisonResult ? (
@@ -257,8 +243,6 @@ export function SchemaCompare() {
           <ComparisonDetails result={comparisonResult} />
         </div>
       )}
-
-      {showDebugConsole && <DebugConsole onClose={() => setShowDebugConsole(false)} />}
     </div>
   );
 }

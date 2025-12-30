@@ -34,6 +34,9 @@ router.get('/restore-progress/:restoreId', backupController.getRestoreProgress.b
 // Execute deployment script
 router.post('/execute-deployment', backupController.executeDeployment.bind(backupController));
 
+// Rollback deployment
+router.post('/rollback-deployment', backupController.rollbackDeployment.bind(backupController));
+
 // Execute SQL query
 router.post('/execute-query', backupController.executeQuery.bind(backupController));
 

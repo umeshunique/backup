@@ -576,7 +576,37 @@ export class BackupController {
       console.log(`Host: ${host}:${port}`);
       console.log('========================================\n');
 
-      // Execute the deployment script
+      // STEP 1: Create backup of target database BEFORE deployment
+      console.log('📦 Step 1: Creating pre-deployment backup...');
+      let backupPath: string | null = null;
+
+      try {
+        const backupResult = await databaseService.executeBackup(
+          { id: `temp-${Date.now()}`, host, port, user, password, type },
+          database,
+          {
+            includeData: true,
+            includeStructure: true,
+            includeProcedures: true,
+            includeViews: true,
+            includeTriggers: true,
+            includeFunctions: true
+          }
+        );
+        backupPath = backupResult;
+        console.log(`✅ Backup created successfully: ${backupPath}`);
+      } catch (backupError: any) {
+        console.error('❌ Failed to create pre-deployment backup:', backupError);
+        res.status(500).json({
+          success: false,
+          message: 'Failed to create pre-deployment backup. Deployment aborted for safety.',
+          error: backupError.message
+        });
+        return;
+      }
+
+      // STEP 2: Execute the deployment script
+      console.log('\n🚀 Step 2: Executing deployment script...');
       const result = await databaseService.executeDeploymentScript(
         { host, port, user, password, type },
         database,
@@ -584,21 +614,26 @@ export class BackupController {
       );
 
       if (!result.success) {
+        console.error('❌ Deployment failed. Backup is available for manual rollback.');
         res.status(500).json({
           success: false,
-          message: 'Deployment failed',
-          errors: result.errors
+          message: 'Deployment failed. Database backup available for rollback.',
+          errors: result.errors,
+          backupPath: backupPath
         });
         return;
       }
 
       console.log('\n========================================');
-      console.log('DEPLOYMENT COMPLETED SUCCESSFULLY');
+      console.log('✅ DEPLOYMENT COMPLETED SUCCESSFULLY');
+      console.log('========================================');
+      console.log(`📦 Backup available at: ${backupPath}`);
       console.log('========================================\n');
 
       res.json({
         success: true,
         message: 'Deployment completed successfully',
+        backupPath: backupPath,
         errors: result.errors || []
       });
     } catch (error: any) {
@@ -606,6 +641,53 @@ export class BackupController {
       res.status(500).json({
         success: false,
         message: error.message || 'Deployment failed'
+      });
+    }
+  }
+
+  /**
+   * Rollback deployment using backup file
+   */
+  async rollbackDeployment(req: Request, res: Response): Promise<void> {
+    try {
+      const { host, port, user, password, type, database, backupPath } = req.body;
+
+      if (!host || !port || !user || !password || !type || !database || !backupPath) {
+        res.status(400).json({
+          success: false,
+          message: 'Missing required parameters'
+        });
+        return;
+      }
+
+      console.log('\n========================================');
+      console.log('🔄 ROLLBACK STARTED');
+      console.log('========================================');
+      console.log(`Database: ${database}`);
+      console.log(`Host: ${host}:${port}`);
+      console.log(`Backup File: ${backupPath}`);
+      console.log('========================================\n');
+
+      // Execute rollback by restoring from backup
+      await databaseService.restoreBackup(
+        { id: `temp-${Date.now()}`, host, port, user, password, type },
+        database,
+        backupPath
+      );
+
+      console.log('\n========================================');
+      console.log('✅ ROLLBACK COMPLETED SUCCESSFULLY');
+      console.log('========================================\n');
+
+      res.json({
+        success: true,
+        message: 'Rollback completed successfully. Database restored to pre-deployment state.'
+      });
+    } catch (error: any) {
+      console.error('Rollback failed:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Rollback failed'
       });
     }
   }
