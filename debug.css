@@ -1,0 +1,18 @@
+/* DEBUG CSS - Add visibility to all elements */
+* {
+  outline: 1px solid red !important;
+}
+
+body {
+  background: #f0f0f0 !important;
+}
+
+#root {
+  background: white !important;
+  min-height: 100vh !important;
+}
+
+#root > * {
+  background: #e0e0e0 !important;
+  border: 3px solid blue !important;
+}

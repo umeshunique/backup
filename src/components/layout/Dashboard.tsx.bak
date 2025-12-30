@@ -1,0 +1,522 @@
+import { useBackupStore } from '@/store/backupStore';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { StatisticsCard, EnvironmentBadge, StatusBadge } from '@/components/shared';
+import { Badge } from '@/components/ui/badge';
+import { formatBytes, formatDuration } from '@/utils/mockData';
+import {
+  Database,
+  HardDrive,
+  Clock,
+  TrendingUp,
+  Play,
+  History,
+  Settings,
+  Calendar,
+  ArrowRight,
+  Server,
+  Table2,
+  FileCode,
+  Eye,
+  Zap,
+  Upload,
+  Download,
+  CheckCircle2,
+  XCircle,
+  Wifi,
+  WifiOff,
+} from 'lucide-react';
+import { format } from 'date-fns';
+import { useState, useEffect } from 'react';
+
+export function Dashboard() {
+  const {
+    servers,
+    backupHistory,
+    storageInfo,
+    scheduledBackups,
+    setActiveTab,
+    getRecentBackups,
+    getDatabasesForServer,
+  } = useBackupStore();
+
+  const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
+  const recentBackups = getRecentBackups(8);
+  const connectedServers = servers.filter((s) => s.connectionStatus === 'connected').length;
+
+  // Select first server by default
+  useEffect(() => {
+    if (!selectedServerId && servers.length > 0) {
+      setSelectedServerId(servers[0].id);
+    }
+  }, [servers, selectedServerId]);
+
+  const selectedServer = servers.find(s => s.id === selectedServerId);
+  const serverDatabases = selectedServerId ? getDatabasesForServer(selectedServerId) : [];
+
+  // Calculate server-specific stats
+  const serverBackups = selectedServer
+    ? backupHistory.filter(b => b.host === selectedServer.host)
+    : [];
+
+  const totalTables = serverDatabases.reduce((sum, db) => sum + (db.tables?.length || 0), 0);
+  const totalProcedures = serverDatabases.reduce((sum, db) => sum + (db.procedures?.length || 0), 0);
+  const totalViews = serverDatabases.reduce((sum, db) => sum + (db.views?.length || 0), 0);
+  const totalTriggers = serverDatabases.reduce((sum, db) => sum + (db.triggers?.length || 0), 0);
+  const totalFunctions = serverDatabases.reduce((sum, db) => sum + (db.functions?.length || 0), 0);
+
+  const stats = {
+    totalBackups: backupHistory.length,
+    lastBackupDate: backupHistory[0]?.createdAt || null,
+    storageUsed: storageInfo.totalStorageUsedGB,
+    successRate: Math.round(
+      (backupHistory.filter((b) => b.status === 'success').length / backupHistory.length) * 100
+    ),
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* Server Selector */}
+      {servers.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Select Server</CardTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setActiveTab('servers')}
+              >
+                <Server className="h-4 w-4 mr-2" />
+                Manage Servers
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="w-full">
+              <div className="flex gap-2 pb-2">
+                {servers.map((server) => (
+                  <Button
+                    key={server.id}
+                    variant={selectedServerId === server.id ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setSelectedServerId(server.id)}
+                    className="flex items-center gap-2"
+                  >
+                    {server.connectionStatus === 'connected' ? (
+                      <Wifi className="h-3 w-3 text-green-400" />
+                    ) : (
+                      <WifiOff className="h-3 w-3 text-red-400" />
+                    )}
+                    {server.name}
+                    <EnvironmentBadge environment={server.environment} size="sm" />
+                  </Button>
+                ))}
+              </div>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Server Info Banner */}
+      {selectedServer && (
+        <Card className="bg-gradient-to-r from-primary/10 to-primary/5">
+          <CardContent className="pt-6">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <h2 className="text-2xl font-bold flex items-center gap-2">
+                  <Database className="h-6 w-6" />
+                  {selectedServer.name}
+                </h2>
+                <p className="text-sm text-muted-foreground font-mono">
+                  {selectedServer.host}:{selectedServer.port} ({selectedServer.databaseType})
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant={selectedServer.connectionStatus === 'connected' ? 'default' : 'destructive'}>
+                  {selectedServer.connectionStatus === 'connected' ? (
+                    <><CheckCircle2 className="h-3 w-3 mr-1" /> Connected</>
+                  ) : (
+                    <><XCircle className="h-3 w-3 mr-1" /> Disconnected</>
+                  )}
+                </Badge>
+                <EnvironmentBadge environment={selectedServer.environment} />
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground">Databases</p>
+                <p className="text-lg font-semibold">{serverDatabases.length}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Total Backups</p>
+                <p className="text-lg font-semibold">{serverBackups.length}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Last Backup</p>
+                <p className="text-sm font-medium">
+                  {serverBackups[0] ? format(serverBackups[0].createdAt instanceof Date ? serverBackups[0].createdAt : new Date(serverBackups[0].createdAt), 'MMM d, HH:mm') : 'Never'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Success Rate</p>
+                <p className="text-lg font-semibold">
+                  {serverBackups.length > 0
+                    ? Math.round((serverBackups.filter(b => b.status === 'success').length / serverBackups.length) * 100)
+                    : 0}%
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Last Connected</p>
+                <p className="text-sm font-medium">
+                  {selectedServer.lastConnected ? format(selectedServer.lastConnected, 'MMM d, HH:mm') : 'Never'}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Database Objects Overview */}
+      {selectedServer && (
+        <div>
+          <h3 className="text-lg font-semibold mb-4">Database Objects</h3>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+            <StatisticsCard
+              title="Tables"
+              value={totalTables}
+              subtitle={`Across ${serverDatabases.length} database(s)`}
+              icon={Table2}
+              variant="primary"
+            />
+            <StatisticsCard
+              title="Stored Procedures"
+              value={totalProcedures}
+              subtitle="Active procedures"
+              icon={FileCode}
+              variant="default"
+            />
+            <StatisticsCard
+              title="Views"
+              value={totalViews}
+              subtitle="Database views"
+              icon={Eye}
+              variant="default"
+            />
+            <StatisticsCard
+              title="Triggers"
+              value={totalTriggers}
+              subtitle="Active triggers"
+              icon={Zap}
+              variant="default"
+            />
+            <StatisticsCard
+              title="Functions"
+              value={totalFunctions}
+              subtitle="Custom functions"
+              icon={FileCode}
+              variant="default"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Global Stats */}
+      <div>
+        <h3 className="text-lg font-semibold mb-4">Overall Statistics</h3>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatisticsCard
+          title="Total Backups"
+          value={stats.totalBackups}
+          subtitle={`${connectedServers} servers connected`}
+          icon={Database}
+          variant="primary"
+        />
+        <StatisticsCard
+          title="Last Backup"
+          value={stats.lastBackupDate ? format(stats.lastBackupDate, 'MMM d, HH:mm') : 'Never'}
+          subtitle={stats.lastBackupDate ? 'Completed successfully' : 'No backups yet'}
+          icon={Clock}
+          variant="success"
+        />
+        <StatisticsCard
+          title="Storage Used"
+          value={`${stats.storageUsed.toFixed(1)} GB`}
+          subtitle={`${storageInfo.availableSpaceGB.toFixed(0)} GB available`}
+          icon={HardDrive}
+          variant="default"
+        />
+        <StatisticsCard
+          title="Success Rate"
+          value={`${stats.successRate}%`}
+          subtitle="Last 30 days"
+          icon={TrendingUp}
+          trend={{ value: 2.5, isPositive: true }}
+          variant="success"
+        />
+      </div>
+
+      {/* Server Databases & Activities */}
+      {selectedServer && serverDatabases.length > 0 && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          {/* Databases List */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Databases ({serverDatabases.length})</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[300px]">
+                <div className="space-y-2">
+                  {serverDatabases.map((db) => (
+                    <div
+                      key={db.name}
+                      className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="space-y-1">
+                        <p className="font-medium text-sm">{db.name}</p>
+                        <div className="flex gap-3 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <Table2 className="h-3 w-3" />
+                            {db.tables?.length || 0} tables
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <FileCode className="h-3 w-3" />
+                            {db.procedures?.length || 0} SPs
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Eye className="h-3 w-3" />
+                            {db.views?.length || 0} views
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">
+                          {db.sizeInMB ? `${db.sizeInMB.toFixed(1)} MB` : '-'}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+
+          {/* Recent Server Activities */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Recent Activities</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[300px]">
+                <div className="space-y-2">
+                  {serverBackups.slice(0, 10).map((backup) => (
+                    <div
+                      key={backup.id}
+                      className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        {backup.status === 'success' ? (
+                          <Upload className="h-4 w-4 text-green-400" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-red-400" />
+                        )}
+                        <div className="space-y-0.5">
+                          <p className="font-medium text-sm">{backup.databaseName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatBytes(backup.fileSize)} • {formatDuration(backup.statistics.duration)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <StatusBadge status={backup.status} size="sm" />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {format(backup.createdAt instanceof Date ? backup.createdAt : new Date(backup.createdAt), 'MMM d, HH:mm')}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  {serverBackups.length === 0 && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Database className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No backup history for this server</p>
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Main Content Grid */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Quick Actions and Info - Full Width */}
+        <div className="lg:col-span-3 grid gap-6 md:grid-cols-3">
+          {/* Quick Actions */}
+          <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Quick Actions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Button
+              className="w-full justify-start gap-2"
+              onClick={() => setActiveTab('backup')}
+            >
+              <Play className="h-4 w-4" />
+              New Backup
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-2"
+              onClick={() => setActiveTab('restore')}
+            >
+              <History className="h-4 w-4" />
+              Restore Database
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-2"
+              onClick={() => setActiveTab('history')}
+            >
+              <Calendar className="h-4 w-4" />
+              View History
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full justify-start gap-2"
+              onClick={() => setActiveTab('settings')}
+            >
+              <Settings className="h-4 w-4" />
+              Settings
+            </Button>
+          </CardContent>
+          </Card>
+
+          {/* Scheduled Backups */}
+          <Card>
+          <CardHeader className="pb-3 flex flex-row items-center justify-between">
+            <CardTitle className="text-base">Scheduled Backups</CardTitle>
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
+              View All
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {scheduledBackups.slice(0, 3).map((schedule) => (
+              <div
+                key={schedule.id}
+                className="flex items-center justify-between p-2 rounded-lg bg-muted/50"
+              >
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium">{schedule.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Next: {format(schedule.nextRun, 'MMM d, HH:mm')}
+                  </p>
+                </div>
+                <div
+                  className={`w-2 h-2 rounded-full ${
+                    schedule.isActive ? 'bg-green-400' : 'bg-muted-foreground'
+                  }`}
+                />
+              </div>
+            ))}
+          </CardContent>
+          </Card>
+
+          {/* Storage Info */}
+          <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Storage</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Used</span>
+                <span className="font-medium">{storageInfo.totalStorageUsedGB.toFixed(1)} GB</span>
+              </div>
+              <div className="h-2 rounded-full bg-secondary overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{
+                    width: `${
+                      (storageInfo.totalStorageUsedGB /
+                        (storageInfo.totalStorageUsedGB + storageInfo.availableSpaceGB)) *
+                      100
+                    }%`,
+                  }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>{storageInfo.totalBackups} backup files</span>
+                <span>{storageInfo.availableSpaceGB.toFixed(0)} GB free</span>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-border">
+              <p className="text-xs text-muted-foreground font-mono truncate">
+                {storageInfo.localPath}
+              </p>
+            </div>
+          </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Recent Backups */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">Recent Backups</CardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1"
+            onClick={() => setActiveTab('history')}
+          >
+            View All
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <ScrollArea className="h-[300px]">
+            <div className="space-y-2">
+              {recentBackups.map((backup) => (
+                <div
+                  key={backup.id}
+                  className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="hidden sm:block">
+                      <EnvironmentBadge environment={backup.environment} size="sm" />
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="font-medium text-sm">{backup.databaseName}</p>
+                      <p className="text-xs text-muted-foreground font-mono">
+                        {backup.fileName}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right hidden md:block">
+                      <p className="text-sm">{formatBytes(backup.fileSize)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDuration(backup.statistics.duration)}
+                      </p>
+                    </div>
+                    <StatusBadge status={backup.status} size="sm" />
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">
+                        {format(backup.createdAt instanceof Date ? backup.createdAt : new Date(backup.createdAt), 'MMM d')}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {format(backup.createdAt instanceof Date ? backup.createdAt : new Date(backup.createdAt), 'HH:mm')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

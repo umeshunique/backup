@@ -1,0 +1,130 @@
+[
+  {
+    "id": "backup_1767008416127_h68kf6ar3",
+    "fileName": "backup_Golden_golden_2025-12-29T11-40-16-011Z.sql",
+    "path": "C:\\Users\\ADMIN\\Desktop\\backup_Golden_golden_2025-12-29T11-40-16-011Z.sql",
+    "fileSize": 6711022,
+    "size": 6711022,
+    "databaseName": "Golden_golden",
+    "database": "Golden_golden",
+    "host": "voltus-central.cx2gsaaem9zc.ap-south-1.rds.amazonaws.com",
+    "port": 3306,
+    "type": "mysql",
+    "backupType": "data",
+    "environment": "production",
+    "createdAt": "2025-12-29T11:40:16.127Z",
+    "timestamp": "2025-12-29T11:40:16.127Z",
+    "status": "completed",
+    "includeData": true,
+    "includeStructure": false,
+    "includeProcedures": true,
+    "includeViews": true,
+    "includeTriggers": false,
+    "includeFunctions": false,
+    "tablesCount": 203,
+    "statistics": {
+      "duration": 0,
+      "totalObjects": 203
+    }
+  },
+  {
+    "id": "backup_1766952464668_u2pi9nm8a",
+    "fileName": "backup_Golden_golden_2025-12-28T20-07-44-459Z.sql",
+    "path": "C:\\Users\\ADMIN\\Desktop\\backup_Golden_golden_2025-12-28T20-07-44-459Z.sql",
+    "fileSize": 39864673,
+    "size": 39864673,
+    "databaseName": "Golden_golden",
+    "database": "Golden_golden",
+    "host": "voltus-central.cx2gsaaem9zc.ap-south-1.rds.amazonaws.com",
+    "port": 3306,
+    "type": "mysql",
+    "backupType": "both",
+    "environment": "production",
+    "createdAt": "2025-12-28T20:07:44.668Z",
+    "timestamp": "2025-12-28T20:07:44.668Z",
+    "status": "completed",
+    "includeData": true,
+    "includeStructure": true,
+    "includeProcedures": true,
+    "includeViews": true,
+    "includeTriggers": true,
+    "includeFunctions": false,
+    "tablesCount": 446,
+    "statistics": {
+      "duration": 0,
+      "totalObjects": 446
+    }
+  },
+  {
+    "id": "backup-sample",
+    "serverName": "Production MySQL",
+    "databaseName": "ecommerce_db",
+    "environment": "production",
+    "fileName": "sample_ecommerce_20251228_120000.sql",
+    "filePath": "./backups/sample_ecommerce_20251228_120000.sql",
+    "fileSize": 15360,
+    "status": "success",
+    "backupType": "full",
+    "createdAt": "2025-12-28T12:00:00.000Z",
+    "statistics": {
+      "duration": 2500,
+      "tablesBackedUp": 5,
+      "totalRows": 25,
+      "compressionRatio": 0.85
+    }
+  },
+  {
+    "id": "backup-001",
+    "serverName": "Production MySQL",
+    "databaseName": "ecommerce_db",
+    "environment": "production",
+    "fileName": "ecommerce_db_20251228_180000.sql",
+    "filePath": "./backups/ecommerce_db_20251228_180000.sql",
+    "fileSize": 524288000,
+    "status": "success",
+    "backupType": "full",
+    "createdAt": "2025-12-28T18:00:00.000Z",
+    "statistics": {
+      "duration": 45000,
+      "tablesBackedUp": 35,
+      "totalRows": 1250000,
+      "compressionRatio": 0.65
+    }
+  },
+  {
+    "id": "backup-002",
+    "serverName": "Staging MySQL",
+    "databaseName": "test_db",
+    "environment": "staging",
+    "fileName": "test_db_20251228_173000.sql",
+    "filePath": "./backups/test_db_20251228_173000.sql",
+    "fileSize": 104857600,
+    "status": "success",
+    "backupType": "full",
+    "createdAt": "2025-12-28T17:30:00.000Z",
+    "statistics": {
+      "duration": 12000,
+      "tablesBackedUp": 12,
+      "totalRows": 320000,
+      "compressionRatio": 0.58
+    }
+  },
+  {
+    "id": "backup-003",
+    "serverName": "Development MySQL",
+    "databaseName": "dev_db",
+    "environment": "development",
+    "fileName": "dev_db_20251228_160000.sql",
+    "filePath": "./backups/dev_db_20251228_160000.sql",
+    "fileSize": 52428800,
+    "status": "success",
+    "backupType": "incremental",
+    "createdAt": "2025-12-28T16:00:00.000Z",
+    "statistics": {
+      "duration": 8000,
+      "tablesBackedUp": 8,
+      "totalRows": 150000,
+      "compressionRatio": 0.72
+    }
+  }
+]
