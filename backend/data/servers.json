@@ -1,16 +1,16 @@
 [
   {
-    "name": "stage",
+    "name": "dev",
     "environment": "development",
-    "host": "voltus-central.cx2gsaaem9zc.ap-south-1.rds.amazonaws.com",
+    "host": "localhost",
     "port": 3306,
     "databaseType": "mysql",
     "username": "admin",
     "password": "Apple#123",
     "isActive": true,
     "connectionStatus": "disconnected",
-    "id": "server_1766951236778_hemk8ly8n",
-    "createdAt": "2025-12-28T19:47:16.778Z",
-    "updatedAt": "2025-12-28T19:47:16.778Z"
+    "id": "server_1767173032298_smnudsemu",
+    "createdAt": "2025-12-31T09:23:52.298Z",
+    "updatedAt": "2025-12-31T09:23:52.298Z"
   }
 ]
