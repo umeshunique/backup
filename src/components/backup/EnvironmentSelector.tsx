@@ -8,7 +8,7 @@ import { EnvironmentBadge } from '@/components/shared';
 import { BackupWizardState } from './BackupWizard';
 import { cn } from '@/lib/utils';
 import { Database, Search, Wifi, WifiOff, HardDrive, Table2, Loader2 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 
 interface EnvironmentSelectorProps {
@@ -20,37 +20,68 @@ export function EnvironmentSelector({ state, onUpdate }: EnvironmentSelectorProp
   const { servers, getDatabasesForServer, loadDatabasesForServer, loadDatabaseSchema } = useBackupStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoadingDatabases, setIsLoadingDatabases] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadedServerIdRef = useRef<string | null>(null);
 
   const selectedServer = servers.find((s) => s.id === state.serverId);
   const databases = state.serverId ? getDatabasesForServer(state.serverId) : [];
 
-  // Load databases when server is selected
+  // Load databases when server is selected (once per server)
   useEffect(() => {
-    if (state.serverId && databases.length === 0) {
-      const loadDatabases = async () => {
-        setIsLoadingDatabases(true);
-        await loadDatabasesForServer(state.serverId!);
-        setIsLoadingDatabases(false);
-      };
-      loadDatabases();
+    if (!state.serverId) {
+      loadedServerIdRef.current = null;
+      setLoadError(null);
+      return;
     }
+    // Avoid re-running when we already have data or already attempted load for this server
+    if (databases.length > 0) {
+      loadedServerIdRef.current = state.serverId;
+      setLoadError(null);
+      return;
+    }
+    if (loadedServerIdRef.current === state.serverId) {
+      return; // Already attempted load for this server (avoid infinite retry on failure)
+    }
+
+    loadedServerIdRef.current = state.serverId;
+    setLoadError(null);
+    const loadDatabases = async () => {
+      setIsLoadingDatabases(true);
+      try {
+        await loadDatabasesForServer(state.serverId!);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to load databases';
+        setLoadError(message);
+        console.error('EnvironmentSelector: load databases failed', err);
+      } finally {
+        setIsLoadingDatabases(false);
+      }
+    };
+    loadDatabases();
   }, [state.serverId, loadDatabasesForServer, databases.length]);
 
-  // Handler for database selection
+  // Handler for database selection: update UI immediately, then load full schema if needed
   const handleDatabaseSelect = async (schema: any) => {
-    // Load the full schema details if not already loaded
-    if (state.serverId && schema.tableCount === 0 && schema.tables.length === 0) {
-      await loadDatabaseSchema(state.serverId, schema.name);
+    // Update selection immediately so the card highlights and summary shows
+    onUpdate({ database: schema });
 
-      // Get the updated schema from the store after loading
-      const updatedDatabases = getDatabasesForServer(state.serverId);
-      const updatedSchema = updatedDatabases.find(db => db.name === schema.name);
+    // Load full schema only when we have minimal schema (needed for Scope step)
+    const needsFullSchema = state.serverId && (
+      (schema.tableCount === 0 && (!schema.tables || schema.tables.length === 0))
+    );
+    if (!needsFullSchema) return;
 
-      // Update the UI with the loaded schema
-      onUpdate({ database: updatedSchema || schema });
-    } else {
-      // Schema already loaded, just update the selection
-      onUpdate({ database: schema });
+    try {
+      await loadDatabaseSchema(state.serverId!, schema.name);
+      const updatedDatabases = getDatabasesForServer(state.serverId!);
+      const updatedSchema = updatedDatabases.find((db) => db.name === schema.name);
+      if (updatedSchema) {
+        onUpdate({ database: updatedSchema });
+      }
+    } catch (err) {
+      console.error('EnvironmentSelector: load schema failed', err);
+      // Keep the minimal schema selected so user can still proceed; Scope step will show empty until they retry
+      setLoadError(err instanceof Error ? err.message : 'Failed to load database details');
     }
   };
 
@@ -149,6 +180,11 @@ export function EnvironmentSelector({ state, onUpdate }: EnvironmentSelectorProp
           </div>
         ) : (
           <div className="space-y-3">
+            {loadError && (
+              <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {loadError}
+              </div>
+            )}
             {/* Search */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -162,9 +198,9 @@ export function EnvironmentSelector({ state, onUpdate }: EnvironmentSelectorProp
 
             <ScrollArea className="h-[350px] rounded-lg border border-border">
               <div className="p-2 space-y-2">
-                {filteredDatabases.length === 0 ? (
+                {filteredDatabases.length === 0 && !isLoadingDatabases ? (
                   <div className="text-center py-8 text-muted-foreground text-sm">
-                    No databases found
+                    {loadError ? 'Could not load databases. Check connection and try again.' : 'No databases found'}
                   </div>
                 ) : (
                   filteredDatabases.map((db) => {
@@ -202,7 +238,7 @@ export function EnvironmentSelector({ state, onUpdate }: EnvironmentSelectorProp
                               <Table2 className="h-3 w-3" />
                               {db.tableCount} tables
                             </span>
-                            <span>{db.sizeInMB.toFixed(1)} MB</span>
+                            <span>{(db.sizeInMB ?? 0).toFixed(1)} MB</span>
                             {db.lastBackupDate && (
                               <span>
                                 Last backup: {format(db.lastBackupDate, 'MMM d, HH:mm')}
@@ -237,19 +273,19 @@ export function EnvironmentSelector({ state, onUpdate }: EnvironmentSelectorProp
                 </div>
                 <div className="flex items-center gap-6 text-sm">
                   <div className="text-center">
-                    <p className="text-2xl font-bold text-primary">{state.database.tableCount}</p>
+                    <p className="text-2xl font-bold text-primary">{state.database.tableCount ?? 0}</p>
                     <p className="text-xs text-muted-foreground">Tables</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-2xl font-bold text-primary">{state.database.procedures.length}</p>
+                    <p className="text-2xl font-bold text-primary">{state.database.procedures?.length ?? 0}</p>
                     <p className="text-xs text-muted-foreground">Procedures</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-2xl font-bold text-primary">{state.database.views.length}</p>
+                    <p className="text-2xl font-bold text-primary">{state.database.views?.length ?? 0}</p>
                     <p className="text-xs text-muted-foreground">Views</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-2xl font-bold">{state.database.sizeInMB.toFixed(0)}</p>
+                    <p className="text-2xl font-bold">{(state.database.sizeInMB ?? 0).toFixed(0)}</p>
                     <p className="text-xs text-muted-foreground">MB</p>
                   </div>
                 </div>

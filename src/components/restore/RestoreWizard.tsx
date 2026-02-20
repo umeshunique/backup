@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { useBackupStore } from '@/store/backupStore';
@@ -31,6 +32,7 @@ export function RestoreWizard() {
   const [selectedServerId, setSelectedServerId] = useState<string>('');
   const [selectedEnvironment, setSelectedEnvironment] = useState<string>('all');
   const [selectedDatabaseName, setSelectedDatabaseName] = useState<string>('');
+  const [customDatabaseName, setCustomDatabaseName] = useState<string>('');
   const [restoreStatus, setRestoreStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [restoreSummary, setRestoreSummary] = useState<RestoreSummary | null>(null);
@@ -153,6 +155,7 @@ export function RestoreWizard() {
     setSelectedServerId('');
     setSelectedEnvironment('all');
     setSelectedDatabaseName('');
+    setCustomDatabaseName('');
     setRestoreStatus('idle');
     setErrorMessage('');
   };
@@ -372,9 +375,12 @@ export function RestoreWizard() {
               <div className="space-y-2">
                 {/* Option to restore to original database name */}
                 <div
-                  onClick={() => setSelectedDatabaseName(selectedBackup?.databaseName || '')}
+                  onClick={() => {
+                    setSelectedDatabaseName(selectedBackup?.databaseName || '');
+                    setCustomDatabaseName('');
+                  }}
                   className={`p-4 border rounded-lg cursor-pointer transition-all ${
-                    selectedDatabaseName === selectedBackup?.databaseName
+                    selectedDatabaseName === selectedBackup?.databaseName && !customDatabaseName
                       ? 'border-primary bg-primary/10'
                       : 'border-border hover:border-primary/50 hover:bg-muted/50'
                   }`}
@@ -393,9 +399,12 @@ export function RestoreWizard() {
                 {databases.map((db) => (
                   <div
                     key={db.name}
-                    onClick={() => setSelectedDatabaseName(db.name)}
+                    onClick={() => {
+                      setSelectedDatabaseName(db.name);
+                      setCustomDatabaseName('');
+                    }}
                     className={`p-4 border rounded-lg cursor-pointer transition-all ${
-                      selectedDatabaseName === db.name
+                      selectedDatabaseName === db.name && !customDatabaseName
                         ? 'border-primary bg-primary/10'
                         : 'border-border hover:border-primary/50 hover:bg-muted/50'
                     }`}
@@ -416,11 +425,30 @@ export function RestoreWizard() {
                 ))}
 
                 {databases.length === 0 && (
-                  <div className="text-center py-12 text-muted-foreground">
+                  <div className="text-center py-8 text-muted-foreground">
                     <p>Loading databases...</p>
                     <p className="text-xs mt-2">Or restore to original database name above</p>
                   </div>
                 )}
+
+                {/* Restore to new database */}
+                <div className="pt-4 mt-4 border-t">
+                  <Label className="text-sm font-medium mb-2 block">Or restore to a new database</Label>
+                  <Input
+                    placeholder="Enter new database name"
+                    value={customDatabaseName}
+                    onChange={(e) => {
+                      const v = e.target.value.trim();
+                      setCustomDatabaseName(v);
+                      setSelectedDatabaseName(v);
+                    }}
+                    className="font-mono"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <p className="text-xs text-muted-foreground mt-2">
+                    The database will be created if it does not exist.
+                  </p>
+                </div>
               </div>
             </ScrollArea>
           </CardContent>

@@ -6,12 +6,11 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { DataLoader } from "@/components/DataLoader";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import { SqlEditorPopoutPage } from "./pages/SqlEditorPopoutPage";
 
 const queryClient = new QueryClient();
 
 const App = () => {
-  console.log('🎨 App component rendering');
-
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -21,6 +20,8 @@ const App = () => {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Index />} />
+            <Route path="/sql-editor-popout" element={<SqlEditorPopoutPage />} />
+            <Route path="/:screenId" element={<Index />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -23,24 +22,34 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { ServerConfig, DatabaseTable } from '@/types/backup.types';
-import { Table2, Plus, Edit, Trash2, Eye, Search, RefreshCw, Database } from 'lucide-react';
+import { Table2, Plus, Edit, Eye, Search, RefreshCw, Database, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ListOrdered, Trash2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useBackupStore } from '@/store/backupStore';
 import { apiClient } from '@/services/apiClient';
-import { TableEditor } from './TableEditor';
+import { TableEditor, type TableEditorAction } from './TableEditor';
 import { DataEditor } from './DataEditor';
 import { toast } from '@/hooks/use-toast';
+
+const TABLE_DATA_PAGE_SIZE = 100;
 
 interface TablesBrowserProps {
   server: ServerConfig;
   database: string;
+  /** When set (e.g. from Database Explorer "View data"), open this table's data on load. */
+  initialTableName?: string | null;
+  /** Called after opening data for initialTableName (so caller can clear the initial table). */
+  onTableDataOpened?: () => void;
 }
 
-export function TablesBrowser({ server, database }: TablesBrowserProps) {
+export function TablesBrowser({ server, database, initialTableName, onTableDataOpened }: TablesBrowserProps) {
   const { getDatabasesForServer, loadDatabaseSchema } = useBackupStore();
+  const hasOpenedInitialRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTable, setSelectedTable] = useState<DatabaseTable | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [tableData, setTableData] = useState<any[] | null>(null);
+  const [tableDataTotal, setTableDataTotal] = useState<number | null>(null);
+  const [tableDataPage, setTableDataPage] = useState(1);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isLoadingSchema, setIsLoadingSchema] = useState(true);
   const [showDataDialog, setShowDataDialog] = useState(false);
@@ -51,6 +60,9 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
   const [editingRow, setEditingRow] = useState<any | null>(null);
   const [rowToDelete, setRowToDelete] = useState<any | null>(null);
   const [showDeleteRowDialog, setShowDeleteRowDialog] = useState(false);
+  const [showStructureDialog, setShowStructureDialog] = useState(false);
+  const [structureTable, setStructureTable] = useState<DatabaseTable | null>(null);
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
 
   const databases = getDatabasesForServer(server.id);
   const selectedDb = databases.find(db => db.name === database);
@@ -64,6 +76,16 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
     };
     fetchSchema();
   }, [server.id, database, loadDatabaseSchema]);
+
+  // When opened from Database Explorer "View data", open this table's data directly
+  useEffect(() => {
+    if (!initialTableName || tables.length === 0 || hasOpenedInitialRef.current) return;
+    const t = tables.find((x) => x.name === initialTableName);
+    if (!t) return;
+    hasOpenedInitialRef.current = true;
+    onTableDataOpened?.();
+    loadTableData(t, 1);
+  }, [initialTableName, tables]);
 
   const filteredTables = tables.filter(table =>
     table.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -87,12 +109,34 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
     }
   };
 
-  const loadTableData = async (table: DatabaseTable) => {
-    setSelectedTable(table);
+  const loadTableData = async (table: DatabaseTable, page: number = 1) => {
+    if (page === 1) {
+      setSelectedTable(table);
+      setTableDataPage(1);
+      setShowDataDialog(true);
+    }
     setIsLoadingData(true);
-    setShowDataDialog(true);
 
     try {
+      const offset = (page - 1) * TABLE_DATA_PAGE_SIZE;
+      if (page === 1) {
+        const countResult = await apiClient.executeQuery({
+          host: server.host,
+          port: server.port,
+          user: server.username,
+          password: server.password,
+          database,
+          type: server.databaseType,
+          query: `SELECT COUNT(*) AS total FROM \`${table.name}\``
+        });
+        if (countResult.success && countResult.rows?.[0]) {
+          const total = Number((countResult.rows[0] as { total: number }).total);
+          setTableDataTotal(Number.isFinite(total) ? total : null);
+        } else {
+          setTableDataTotal(null);
+        }
+      }
+
       const result = await apiClient.executeQuery({
         host: server.host,
         port: server.port,
@@ -100,19 +144,27 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
         password: server.password,
         database,
         type: server.databaseType,
-        query: `SELECT * FROM \`${table.name}\` LIMIT 100`
+        query: `SELECT * FROM \`${table.name}\` LIMIT ${TABLE_DATA_PAGE_SIZE} OFFSET ${offset}`
       });
 
       if (result.success && result.rows) {
         setTableData(result.rows);
+        setTableDataPage(page);
       }
     } catch (error) {
       console.error('Error loading table data:', error);
       setTableData([]);
+      if (page === 1) setTableDataTotal(null);
     } finally {
       setIsLoadingData(false);
     }
   };
+
+  const tableDataTotalPages = tableDataTotal != null ? Math.ceil(tableDataTotal / TABLE_DATA_PAGE_SIZE) : null;
+  const paginationStart = (tableDataPage - 1) * TABLE_DATA_PAGE_SIZE + 1;
+  const paginationEnd = tableDataTotal != null
+    ? Math.min(tableDataPage * TABLE_DATA_PAGE_SIZE, tableDataTotal)
+    : (tableData?.length ? paginationStart + tableData.length - 1 : paginationStart);
 
   const handleDeleteTable = async () => {
     if (!selectedTable) return;
@@ -135,6 +187,11 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
 
       setShowDeleteDialog(false);
       setSelectedTable(null);
+      setSelectedTables((prev) => {
+        const next = new Set(prev);
+        if (selectedTable) next.delete(selectedTable.name);
+        return next;
+      });
 
       // Reload schema
       loadDatabaseSchema(server.id, database);
@@ -169,6 +226,7 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
         description: `${selectedTables.size} tables deleted successfully`,
       });
 
+      setShowBulkDeleteDialog(false);
       setSelectedTables(new Set());
       loadDatabaseSchema(server.id, database);
     } catch (error) {
@@ -181,7 +239,7 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
     }
   };
 
-  const handleSaveTable = async (sql: string) => {
+  const handleSaveTable = async (sql: string, action?: TableEditorAction) => {
     try {
       await apiClient.executeQuery({
         host: server.host,
@@ -193,15 +251,22 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
         query: sql
       });
 
-      toast({
-        title: "Success",
-        description: editingTable ? `Table "${editingTable.name}" updated successfully` : "Table created successfully",
-      });
+      if (action === 'drop' && editingTable) {
+        toast({ title: "Success", description: `Table "${editingTable.name}" dropped successfully` });
+        if (selectedTable?.name === editingTable.name) {
+          setSelectedTable(null);
+          setShowDataDialog(false);
+        }
+      } else {
+        toast({
+          title: "Success",
+          description: editingTable ? `Table "${editingTable.name}" updated successfully` : "Table created successfully",
+        });
+      }
 
       setShowEditorDialog(false);
       setEditingTable(null);
 
-      // Reload schema
       loadDatabaseSchema(server.id, database);
     } catch (error) {
       console.error('Error saving table:', error);
@@ -308,25 +373,31 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
       {/* Header & Actions */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CardTitle className="flex items-center gap-2">
-                <Table2 className="h-5 w-5" />
-                Tables
-              </CardTitle>
-              <Badge variant="secondary">{tables.length}</Badge>
-              {selectedTables.size > 0 && (
-                <Badge variant="default">{selectedTables.size} selected</Badge>
-              )}
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-3">
+                <CardTitle className="flex items-center gap-2">
+                  <Table2 className="h-5 w-5" />
+                  Tables
+                </CardTitle>
+                <Badge variant="secondary">{tables.length}</Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Create table, edit table (add/drop/modify columns, foreign keys), or drop table. Use <strong>Create Table</strong> or the <strong>Edit</strong> (pencil) icon on a row.
+              </p>
             </div>
             <div className="flex gap-2">
               {selectedTables.size > 0 && (
-                <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setShowBulkDeleteDialog(true)}
+                >
                   <Trash2 className="h-4 w-4 mr-2" />
-                  Delete Selected ({selectedTables.size})
+                  Delete selected ({selectedTables.size})
                 </Button>
               )}
-              <Button variant="outline" size="sm" onClick={() => loadDatabaseSchema(server.id, database)}>
+              <Button variant="outline" size="sm" onClick={() => loadDatabaseSchema(server.id, database, true)}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
               </Button>
@@ -367,10 +438,11 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-12">
+                    <TableHead className="w-10">
                       <Checkbox
-                        checked={selectedTables.size === filteredTables.length && filteredTables.length > 0}
+                        checked={filteredTables.length > 0 && selectedTables.size === filteredTables.length}
                         onCheckedChange={toggleSelectAll}
+                        aria-label="Select all tables"
                       />
                     </TableHead>
                     <TableHead>Table Name</TableHead>
@@ -383,11 +455,12 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
                 </TableHeader>
                 <TableBody>
                   {filteredTables.map((table) => (
-                    <TableRow key={table.name} className={selectedTables.has(table.name) ? 'bg-muted/50' : ''}>
-                      <TableCell>
+                    <TableRow key={table.name}>
+                      <TableCell className="w-10">
                         <Checkbox
                           checked={selectedTables.has(table.name)}
                           onCheckedChange={() => toggleTableSelection(table.name)}
+                          aria-label={`Select ${table.name}`}
                         />
                       </TableCell>
                       <TableCell className="font-mono font-medium">{table.name}</TableCell>
@@ -400,7 +473,19 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
                           <Button
                             variant="ghost"
                             size="sm"
+                            onClick={() => {
+                              setStructureTable(table);
+                              setShowStructureDialog(true);
+                            }}
+                            title="View table structure"
+                          >
+                            <ListOrdered className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => loadTableData(table)}
+                            title="View data"
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
@@ -411,6 +496,7 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
                               setEditingTable(table);
                               setShowEditorDialog(true);
                             }}
+                            title="Edit table (add/drop columns, FK, or drop table)"
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
@@ -421,6 +507,8 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
                               setSelectedTable(table);
                               setShowDeleteDialog(true);
                             }}
+                            title="Delete table"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -443,8 +531,11 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
       </Card>
 
       {/* View Table Data Dialog */}
-      <Dialog open={showDataDialog} onOpenChange={setShowDataDialog}>
-        <DialogContent className="max-w-6xl max-h-[80vh]">
+      <Dialog open={showDataDialog} onOpenChange={(open) => {
+        setShowDataDialog(open);
+        if (!open) setTableDataPage(1);
+      }}>
+        <DialogContent className="max-w-6xl max-h-[80vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center justify-between">
               <span>Table Data: {selectedTable?.name}</span>
@@ -457,15 +548,71 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
               </Button>
             </DialogTitle>
             <DialogDescription>
-              Showing first 100 rows
+              {TABLE_DATA_PAGE_SIZE} records per page
+              {tableDataTotal != null && ` · ${tableDataTotal.toLocaleString()} total rows`}
             </DialogDescription>
           </DialogHeader>
+          {tableDataTotal != null && tableData != null && !isLoadingData && (
+            <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+              <span className="text-muted-foreground tabular-nums">
+                Rows {paginationStart}–{paginationEnd} of {tableDataTotal.toLocaleString()}
+                {tableDataTotalPages != null && tableDataTotalPages > 1 && ` · 100 per page`}
+              </span>
+              {tableDataTotalPages != null && tableDataTotalPages > 1 ? (
+              <div className="flex items-center gap-0.5">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={tableDataPage <= 1}
+                  onClick={() => selectedTable && loadTableData(selectedTable, 1)}
+                  aria-label="First page"
+                >
+                  <ChevronsLeft className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={tableDataPage <= 1}
+                  onClick={() => selectedTable && loadTableData(selectedTable, tableDataPage - 1)}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+                <span className="px-2 font-mono tabular-nums min-w-[4rem] text-center">
+                  Page {tableDataPage} of {tableDataTotalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={tableDataPage >= tableDataTotalPages}
+                  onClick={() => selectedTable && loadTableData(selectedTable, tableDataPage + 1)}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={tableDataPage >= tableDataTotalPages}
+                  onClick={() => selectedTable && loadTableData(selectedTable, tableDataTotalPages)}
+                  aria-label="Last page"
+                >
+                  <ChevronsRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              ) : null}
+            </div>
+          )}
           {isLoadingData ? (
             <div className="flex items-center justify-center py-8">
               <RefreshCw className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : tableData && tableData.length > 0 ? (
-            <ScrollArea className="h-[400px]">
+            <ScrollArea className="h-[min(400px,50vh)] min-h-[280px] w-full shrink-0 overflow-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -498,6 +645,7 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
                               setEditingRow(row);
                               setShowDataEditorDialog(true);
                             }}
+                            title="Edit row"
                           >
                             <Edit className="h-3 w-3" />
                           </Button>
@@ -508,6 +656,8 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
                               setRowToDelete(row);
                               setShowDeleteRowDialog(true);
                             }}
+                            title="Delete row"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
                           >
                             <Trash2 className="h-3 w-3" />
                           </Button>
@@ -533,31 +683,20 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Table</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete table "{selectedTable?.name}"? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDeleteTable}>
-              Delete Table
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Table Editor Dialog */}
-      <Dialog open={showEditorDialog} onOpenChange={setShowEditorDialog}>
+      <Dialog
+        open={showEditorDialog}
+        onOpenChange={(open) => {
+          setShowEditorDialog(open);
+          if (!open) setEditingTable(null);
+        }}
+      >
         <DialogContent className="max-w-4xl max-h-[90vh]">
+          <DialogTitle className="sr-only">Edit table</DialogTitle>
           <TableEditor
             table={editingTable}
+            tableNames={tables.map((t) => t.name)}
+            schemaName={database}
             onSave={handleSaveTable}
             onCancel={() => {
               setShowEditorDialog(false);
@@ -569,7 +708,8 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
 
       {/* Data Row Editor Dialog */}
       <Dialog open={showDataEditorDialog} onOpenChange={setShowDataEditorDialog}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+          <DialogTitle className="sr-only">{editingRow ? 'Edit row' : 'Insert row'}</DialogTitle>
           {selectedTable && (
             <DataEditor
               table={selectedTable}
@@ -584,23 +724,137 @@ export function TablesBrowser({ server, database }: TablesBrowserProps) {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Row Confirmation Dialog */}
-      <Dialog open={showDeleteRowDialog} onOpenChange={setShowDeleteRowDialog}>
+      {/* Delete table confirmation */}
+      <Dialog open={showDeleteDialog} onOpenChange={(open) => {
+        if (!open) setShowDeleteDialog(false);
+      }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Row</DialogTitle>
+            <DialogTitle>Delete table</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this row? This action cannot be undone.
+              Are you sure you want to delete the table &quot;{selectedTable?.name}&quot;? This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteRowDialog(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDeleteRow}>
-              Delete Row
-            </Button>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteTable}>Delete</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete row confirmation */}
+      <Dialog open={showDeleteRowDialog} onOpenChange={(open) => {
+        if (!open) {
+          setShowDeleteRowDialog(false);
+          setRowToDelete(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete row</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this row? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDeleteRowDialog(false); setRowToDelete(null); }}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteRow}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk delete tables confirmation */}
+      <Dialog open={showBulkDeleteDialog} onOpenChange={setShowBulkDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {selectedTables.size} table(s)</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the selected tables? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkDeleteDialog(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleBulkDelete}>Delete all</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Table structure dialog */}
+      <Dialog
+        open={showStructureDialog}
+        onOpenChange={(open) => {
+          setShowStructureDialog(open);
+          if (!open) setStructureTable(null);
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ListOrdered className="h-5 w-5" />
+              Table structure: {structureTable?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Columns, types, keys, and constraints for this table.
+            </DialogDescription>
+          </DialogHeader>
+          {structureTable && (
+            <ScrollArea className="flex-1 border rounded-md">
+              {structureTable.columns && structureTable.columns.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="font-mono">Field</TableHead>
+                      <TableHead className="font-mono">Type</TableHead>
+                      <TableHead>Null</TableHead>
+                      <TableHead>Key</TableHead>
+                      <TableHead className="font-mono">Default</TableHead>
+                      <TableHead>Extra</TableHead>
+                      {structureTable.columns.some((c) => c.comment) && (
+                        <TableHead>Comment</TableHead>
+                      )}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {structureTable.columns.map((col) => {
+                      const keys: string[] = [];
+                      if (col.isPrimaryKey) keys.push('PRI');
+                      if (col.isUnique && !col.isPrimaryKey) keys.push('UNI');
+                      if (col.isForeignKey) keys.push('MUL');
+                      const extra: string[] = [];
+                      if (col.autoIncrement) extra.push('auto_increment');
+                      const typeDisplay =
+                        col.dataType +
+                        (col.maxLength != null ? `(${col.maxLength})` : '') +
+                        (col.precision != null && col.scale != null ? `(${col.precision},${col.scale})` : '') +
+                        (col.precision != null && col.scale == null ? `(${col.precision})` : '');
+                      return (
+                        <TableRow key={col.name}>
+                          <TableCell className="font-mono font-medium">{col.name}</TableCell>
+                          <TableCell className="font-mono text-xs">{typeDisplay}</TableCell>
+                          <TableCell>{col.nullable ? 'YES' : 'NO'}</TableCell>
+                          <TableCell>{keys.length ? keys.join(', ') : '-'}</TableCell>
+                          <TableCell className="font-mono text-xs">
+                            {col.defaultValue != null && col.defaultValue !== '' ? col.defaultValue : '-'}
+                          </TableCell>
+                          <TableCell>{extra.length ? extra.join(', ') : '-'}</TableCell>
+                          {structureTable.columns!.some((c) => c.comment) && (
+                            <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate" title={col.comment}>
+                              {col.comment || '-'}
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="p-6 text-center text-muted-foreground">
+                  <p className="font-medium">No column information loaded</p>
+                  <p className="text-sm mt-1">Refresh the schema to load table structure, or open Edit to see the table definition.</p>
+                </div>
+              )}
+            </ScrollArea>
+          )}
         </DialogContent>
       </Dialog>
     </div>

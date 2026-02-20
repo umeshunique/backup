@@ -1,94 +1,165 @@
-import { Header, Dashboard, Sidebar } from '@/components/layout';
-import { BackupWizard } from '@/components/backup';
-import { RestoreWizard } from '@/components/restore';
-import { BackupHistoryTable } from '@/components/history';
-import { SchemaCompare } from '@/components/compare';
-import { ReleaseManagement } from '@/components/release';
-import { ServersPage } from '@/components/server';
-import { BuildManagement } from '@/components/build';
-import { DebugConsolePage } from './DebugConsolePage';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { toast } from '@/hooks/use-toast';
+import {
+  Header,
+  MenuBar,
+  TopTabBar,
+  ServerDatabaseBar,
+  ConnectionPlaceholder,
+  DatabaseExplorer,
+  BottomPanel,
+} from '@/components/layout';
+import { ServerConfigWizard } from '@/components/server';
 import { useBackupStore } from '@/store/backupStore';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Settings, FolderOpen, Bell, Shield } from 'lucide-react';
-
-function SettingsPage() {
-  return (
-    <div className="space-y-6 animate-fade-in">
-      <h2 className="text-2xl font-bold">Settings</h2>
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card className="card-hover cursor-pointer">
-          <CardContent className="p-6 flex items-center gap-4">
-            <div className="rounded-lg bg-primary/10 p-3">
-              <FolderOpen className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h3 className="font-semibold">Storage Settings</h3>
-              <p className="text-sm text-muted-foreground">Configure backup storage locations</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="card-hover cursor-pointer">
-          <CardContent className="p-6 flex items-center gap-4">
-            <div className="rounded-lg bg-primary/10 p-3">
-              <Bell className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h3 className="font-semibold">Notifications</h3>
-              <p className="text-sm text-muted-foreground">Email and webhook settings</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="card-hover cursor-pointer">
-          <CardContent className="p-6 flex items-center gap-4">
-            <div className="rounded-lg bg-primary/10 p-3">
-              <Shield className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h3 className="font-semibold">Security</h3>
-              <p className="text-sm text-muted-foreground">Encryption and access control</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="card-hover cursor-pointer">
-          <CardContent className="p-6 flex items-center gap-4">
-            <div className="rounded-lg bg-primary/10 p-3">
-              <Settings className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h3 className="font-semibold">Advanced</h3>
-              <p className="text-sm text-muted-foreground">Timeouts, limits, and performance</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
+import { apiClient } from '@/services/apiClient';
+import { SCREEN_COMPONENTS, DATABASE_SCREEN_IDS } from '@/config/screenRegistry';
+import { AddServerContext } from '@/contexts/AddServerContext';
+import type { ServerConfig } from '@/types/backup.types';
+import NotFound from '@/pages/NotFound';
 
 const Index = () => {
-  const { activeTab } = useBackupStore();
+  const { screenId: paramScreenId } = useParams<{ screenId?: string }>();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const { activeTab, setActiveTab, selectedServerId, selectedDatabaseName, loadBackupHistory, addServer, updateServer, getServerById } = useBackupStore();
+  const connectionBarRef = useRef<HTMLDivElement | null>(null);
+  const [addServerDialogOpen, setAddServerDialogOpen] = useState(false);
+  const [editingServer, setEditingServer] = useState<ServerConfig | null>(null);
+
+  const handleAddServerClick = useCallback(() => {
+    setEditingServer(null);
+    setAddServerDialogOpen(true);
+  }, []);
+
+  const handleEditServerClick = useCallback(() => {
+    if (selectedServerId) {
+      const server = getServerById(selectedServerId);
+      if (server) {
+        setEditingServer(server);
+        setAddServerDialogOpen(true);
+      }
+    }
+  }, [selectedServerId, getServerById]);
+
+  const isDatabaseObjectsScreen = activeTab === 'database-objects';
+  const isFullHeightScreen = isDatabaseObjectsScreen || activeTab === 'sql-editor';
+
+  // On open/refresh always land on SQL Editor; keep URL in sync with activeTab
+  useEffect(() => {
+    navigate('/sql-editor', { replace: true });
+    setActiveTab('sql-editor');
+  }, []);
+
+  // Sync store -> URL when activeTab changes (so Back/Forward and links update the address bar)
+  useEffect(() => {
+    const currentPath = paramScreenId ?? (pathname === '/' ? '' : pathname.slice(1).split('/')[0] ?? '');
+    if (activeTab !== currentPath) {
+      navigate(activeTab ? `/${activeTab}` : '/', { replace: pathname === '/' });
+    }
+  }, [activeTab, paramScreenId, pathname, navigate]);
+
+  useEffect(() => {
+    if (activeTab === 'history') loadBackupHistory();
+  }, [activeTab, loadBackupHistory]);
+
+  // Wire API query execution to Action Output log in bottom panel
+  useEffect(() => {
+    const { addActionLogEntry } = useBackupStore.getState();
+    apiClient.setOnQueryExecuted((e) => addActionLogEntry(e));
+    return () => apiClient.setOnQueryExecuted(undefined);
+  }, []);
+
+  const isDatabaseScreen = DATABASE_SCREEN_IDS.includes(activeTab);
+  const showDatabasePlaceholder = isDatabaseScreen && !(selectedServerId && selectedDatabaseName);
+  const Screen = showDatabasePlaceholder
+    ? null
+    : (SCREEN_COMPONENTS[activeTab] ?? null);
+  const isServersScreen = activeTab === 'servers';
 
   return (
-    <div className="h-screen flex flex-col bg-background">
-      <Header />
-      <div className="flex-1 flex min-h-0">
-        <Sidebar />
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-6 max-w-[1800px] mx-auto h-full">
-            {activeTab === 'dashboard' && <Dashboard />}
-            {activeTab === 'servers' && <ServersPage />}
-            {activeTab === 'backup' && <BackupWizard />}
-            {activeTab === 'restore' && <RestoreWizard />}
-            {activeTab === 'compare' && <SchemaCompare />}
-            {activeTab === 'release' && <ReleaseManagement />}
-            {activeTab === 'builds' && <BuildManagement />}
-            {activeTab === 'history' && <BackupHistoryTable />}
-            {activeTab === 'console' && <DebugConsolePage />}
-            {activeTab === 'settings' && <SettingsPage />}
+    <AddServerContext.Provider value={handleAddServerClick}>
+      <div className="h-screen flex flex-col bg-background">
+        <Header />
+        <MenuBar />
+        <TopTabBar />
+        <div ref={connectionBarRef}>
+          <ServerDatabaseBar onAddServerClick={handleAddServerClick} onEditServerClick={handleEditServerClick} />
+        </div>
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 flex min-h-0 min-w-0">
+            {!isServersScreen && !isDatabaseObjectsScreen && (
+              <DatabaseExplorer onAddServerClick={handleAddServerClick} />
+            )}
+            <main
+              className={
+                isFullHeightScreen
+                  ? 'flex-1 overflow-hidden min-w-0 flex flex-col min-h-0'
+                  : 'flex-1 overflow-y-auto scrollbar-thin min-w-0 flex flex-col min-h-0'
+              }
+            >
+              <div
+                className={
+                  isFullHeightScreen
+                    ? 'flex flex-1 min-h-0 min-w-0'
+                    : 'p-6 max-w-[1800px] mx-auto min-h-full'
+                }
+              >
+                {showDatabasePlaceholder ? (
+                  <ConnectionPlaceholder
+                    connectionBarRef={connectionBarRef}
+                    onAddServerClick={handleAddServerClick}
+                  />
+                ) : Screen != null ? (
+                  Screen
+                ) : (
+                  <NotFound />
+                )}
+              </div>
+            </main>
           </div>
-        </main>
+          <BottomPanel />
+        </div>
+
+      {/* Add Server dialog — open from connection bar so users can add a server from any page */}
+      <ServerConfigWizard
+        open={addServerDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) setEditingServer(null);
+          setAddServerDialogOpen(open);
+        }}
+        server={editingServer}
+        onSave={async (data) => {
+          try {
+            if (editingServer) {
+              await updateServer(editingServer.id, data);
+              setAddServerDialogOpen(false);
+              setEditingServer(null);
+              toast({
+                title: 'Server Updated',
+                description: 'The server configuration has been updated.',
+              });
+            } else {
+              await addServer(data);
+              setAddServerDialogOpen(false);
+              toast({
+                title: 'Server Added',
+                description: 'New server configuration has been added.',
+              });
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : (editingServer ? 'Failed to update server.' : 'Failed to add server.');
+            toast({
+              title: 'Error',
+              description: message,
+              variant: 'destructive',
+            });
+            throw error;
+          }
+        }}
+      />
       </div>
-    </div>
+    </AddServerContext.Provider>
   );
 };
 

@@ -63,7 +63,7 @@ export function DestinationConfig({ state, onUpdate }: DestinationConfigProps) {
               <Input
                 value={state.destinationPath}
                 onChange={(e) => onUpdate({ destinationPath: e.target.value })}
-                placeholder="C:\Backups or /var/backups/db-manager"
+                placeholder="Leave empty to use server default (./backups)"
                 className="font-mono"
               />
               <Button

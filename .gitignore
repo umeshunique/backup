@@ -30,3 +30,6 @@ nul
 
 # Build info
 *.tsbuildinfo
+
+# Database backup files (often large)
+backend/backups/

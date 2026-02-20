@@ -299,7 +299,7 @@ END;`;
                   Delete Selected ({selectedObjects.size})
                 </Button>
               )}
-              <Button variant="outline" size="sm" onClick={() => loadDatabaseSchema(server.id, database)}>
+              <Button variant="outline" size="sm" onClick={() => loadDatabaseSchema(server.id, database, true)}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh
               </Button>

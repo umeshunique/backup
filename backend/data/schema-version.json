@@ -1,0 +1,16 @@
+{
+  "server_1769843817197_zf9wkq892:c1s1_billing_crm_DEV_1_s4JNKRDR_dev": {
+    "repoPath": "https://github.com/umeshunique/backup.git",
+    "connected": true,
+    "branches": [
+      {
+        "name": "database",
+        "isCurrent": true,
+        "lastCommit": "b6a69d7",
+        "lastMessage": ""
+      }
+    ],
+    "commits": [],
+    "uncommitted": []
+  }
+}

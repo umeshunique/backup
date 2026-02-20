@@ -14,7 +14,9 @@ export const config = {
   },
 
   cors: {
-    allowedOrigins: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:8080', 'http://localhost:5173']
+    allowedOrigins: process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+      : ['http://localhost:8080', 'http://localhost:5173', 'http://localhost:8082', 'http://127.0.0.1:8082', 'http://127.0.0.1:5173'],
   },
 
   backup: {

@@ -1,3 +1,13 @@
-export { Dashboard } from './Dashboard';
 export { Header } from './Header';
+export { MenuBar } from './MenuBar';
+export { TopTabBar } from './TopTabBar';
+export { PageShell } from './PageShell';
 export { Sidebar } from './Sidebar';
+export { ServerDatabaseBar } from './ServerDatabaseBar';
+export { CompactContextBar } from './CompactContextBar';
+export { ConnectionPlaceholder } from './ConnectionPlaceholder';
+export { DatabaseExplorer } from './DatabaseExplorer';
+export { BottomPanel } from './BottomPanel';
+export { StartPage } from './StartPage';
+export { getPageMeta, PAGE_META } from './pageConfig';
+export type { TabId, PageMeta } from './pageConfig';

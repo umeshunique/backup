@@ -10,14 +10,6 @@ export interface DatabaseConfig {
   type: 'mysql' | 'mssql' | 'postgresql';
 }
 
-export interface DatabaseSchema {
-  name: string;
-  tables: TableInfo[];
-  views: ViewInfo[];
-  procedures: ProcedureInfo[];
-  functions: FunctionInfo[];
-  triggers: TriggerInfo[];
-}
 
 export interface TableInfo {
   name: string;
@@ -41,6 +33,20 @@ export interface FunctionInfo {
 export interface TriggerInfo {
   name: string;
   table: string;
+}
+
+export interface EventInfo {
+  name: string;
+}
+
+export interface DatabaseSchema {
+  name: string;
+  tables: TableInfo[];
+  views: ViewInfo[];
+  procedures: ProcedureInfo[];
+  functions: FunctionInfo[];
+  triggers: TriggerInfo[];
+  events: EventInfo[];
 }
 
 class DatabaseService {
@@ -97,6 +103,54 @@ class DatabaseService {
         .filter(db => !['information_schema', 'mysql', 'performance_schema', 'sys'].includes(db));
     } catch (error: any) {
       throw new Error(`Failed to get databases: ${error.message}`);
+    }
+  }
+
+  /**
+   * Create a new database on the server
+   */
+  async createDatabase(config: DatabaseConfig, databaseName: string): Promise<void> {
+    if (!databaseName || !/^[a-zA-Z0-9_$]+$/.test(databaseName)) {
+      throw new Error('Invalid database name. Use only letters, numbers, underscore, or dollar sign.');
+    }
+    try {
+      const connection = await mysql.createConnection({
+        host: config.host,
+        port: config.port,
+        user: config.user,
+        password: config.password
+      });
+      const escaped = databaseName.replace(/`/g, '``');
+      await connection.query(`CREATE DATABASE \`${escaped}\``);
+      await connection.end();
+    } catch (error: any) {
+      throw new Error(`Failed to create database: ${error.message}`);
+    }
+  }
+
+  /**
+   * Drop a database on the server
+   */
+  async dropDatabase(config: DatabaseConfig, databaseName: string): Promise<void> {
+    const systemDbs = ['information_schema', 'mysql', 'performance_schema', 'sys'];
+    if (systemDbs.includes(databaseName)) {
+      throw new Error('Cannot drop system database.');
+    }
+    if (!databaseName || !/^[a-zA-Z0-9_$]+$/.test(databaseName)) {
+      throw new Error('Invalid database name.');
+    }
+    try {
+      const connection = await mysql.createConnection({
+        host: config.host,
+        port: config.port,
+        user: config.user,
+        password: config.password
+      });
+      const escaped = databaseName.replace(/`/g, '``');
+      await connection.query(`DROP DATABASE \`${escaped}\``);
+      await connection.end();
+    } catch (error: any) {
+      throw new Error(`Failed to drop database: ${error.message}`);
     }
   }
 
@@ -164,6 +218,19 @@ class DatabaseService {
         FROM information_schema.TRIGGERS
         WHERE TRIGGER_SCHEMA = ?
       `, [databaseName]);
+
+      // Get events (MySQL scheduled events; may not exist on older MySQL/MariaDB)
+      let eventsResult: any[] = [];
+      try {
+        const [evRows] = await connection.query(`
+          SELECT EVENT_NAME as name
+          FROM information_schema.EVENTS
+          WHERE EVENT_SCHEMA = ?
+        `, [databaseName]);
+        eventsResult = evRows as any[];
+      } catch (err) {
+        console.warn('EVENTS not available or query failed (older MySQL?):', (err as Error).message);
+      }
 
       console.log(`📋 Processing ${(tablesResult as any[]).length} tables for detailed information...`);
 
@@ -402,6 +469,9 @@ class DatabaseService {
       console.log(`   Functions: ${functionsWithDef.length}`);
       console.log(`   Triggers: ${triggersWithDef.length}`);
 
+      const eventsList = eventsResult.map((evt) => ({ name: evt.name }));
+      console.log(`   Events: ${eventsList.length}`);
+
       // Calculate totals
       const totalSizeInBytes = enhancedTables.reduce((sum, table) => sum + ((table.sizeInMB || 0) * 1024 * 1024), 0);
       const sizeInMB = totalSizeInBytes / (1024 * 1024);
@@ -415,7 +485,7 @@ class DatabaseService {
         views: viewsWithDef,
         functions: functionsWithDef,
         triggers: triggersWithDef,
-        events: []
+        events: eventsList
       };
 
       console.log(`📤 Returning schema for ${databaseName}`);
@@ -618,6 +688,16 @@ class DatabaseService {
     restoreMode: 'replace' | 'upsert' = 'replace'
   ): Promise<void> {
     try {
+      // Ensure database exists (required when restoring to a new database)
+      const adminConnection = await mysql.createConnection({
+        host: config.host,
+        port: config.port,
+        user: config.user,
+        password: config.password
+      });
+      await adminConnection.query(`CREATE DATABASE IF NOT EXISTS \`${databaseName.replace(/`/g, '``')}\``);
+      await adminConnection.end();
+
       const connection = await mysql.createConnection({
         host: config.host,
         port: config.port,
@@ -1039,6 +1119,17 @@ class DatabaseService {
   /**
    * Execute arbitrary SQL query
    */
+  /** Map MySQL field type numbers to short type names for UI */
+  private static mysqlTypeName(typeNum: number): string {
+    const map: Record<number, string> = {
+      0: 'DECIMAL', 1: 'TINYINT', 2: 'SMALLINT', 3: 'INT', 4: 'FLOAT', 5: 'DOUBLE',
+      6: 'NULL', 7: 'TIMESTAMP', 8: 'BIGINT', 9: 'MEDIUMINT', 10: 'DATE', 11: 'TIME',
+      12: 'DATETIME', 13: 'YEAR', 15: 'VARCHAR', 16: 'BIT', 245: 'JSON', 246: 'DECIMAL',
+      247: 'ENUM', 248: 'SET', 252: 'BLOB', 253: 'VARCHAR', 254: 'CHAR', 255: 'GEOMETRY',
+    };
+    return map[typeNum] ?? `TYPE_${typeNum}`;
+  }
+
   async executeQuery(
     credentials: { host: string; port: number; user: string; password: string; type: string },
     database: string,
@@ -1046,6 +1137,7 @@ class DatabaseService {
   ): Promise<{
     success: boolean;
     columns?: string[];
+    columnTypes?: string[];
     rows?: any[];
     affectedRows?: number;
     message?: string;
@@ -1067,9 +1159,13 @@ class DatabaseService {
       // Check if this is a SELECT query (returns rows)
       if (Array.isArray(results) && fields) {
         const columns = fields.map((field: any) => field.name);
+        const columnTypes = fields.map((field: any) =>
+          DatabaseService.mysqlTypeName(field.columnType ?? field.type ?? 253)
+        );
         return {
           success: true,
           columns,
+          columnTypes,
           rows: results
         };
       }
@@ -1100,6 +1196,129 @@ class DatabaseService {
       }
     }
   }
+
+  /**
+   * Get top N slow queries from MySQL performance_schema (by total time).
+   * Optional filter by schema (database) name.
+   */
+  async getSlowQueries(
+    config: DatabaseConfig,
+    options: { database?: string | null; topN?: number }
+  ): Promise<{
+    success: boolean;
+    queries?: Array<{
+      id: string;
+      normalizedQuery: string;
+      sqlText: string;
+      executionCount: number;
+      avgTimeMs: number;
+      totalTimeMs: number;
+      minTimeMs: number;
+      maxTimeMs: number;
+      databaseName: string;
+      hints: string[];
+    }>;
+    error?: string;
+  }> {
+    if (config.type !== 'mysql') {
+      return {
+        success: false,
+        error: 'Slow query analyzer is only supported for MySQL (uses performance_schema).'
+      };
+    }
+
+    const topN = Math.min(Math.max(options.topN ?? 25, 1), 500);
+    const schemaFilter = options.database?.trim() || null;
+
+    let connection;
+    try {
+      connection = await mysql.createConnection({
+        host: config.host,
+        port: config.port,
+        user: config.user,
+        password: config.password,
+        connectTimeout: 10000
+      });
+
+      // MySQL performance_schema: timer values are in picoseconds (1e12 ps = 1 s)
+      const schemaCondition = schemaFilter
+        ? 'AND SCHEMA_NAME = ?'
+        : 'AND SCHEMA_NAME IS NOT NULL AND SCHEMA_NAME NOT IN (\'information_schema\', \'mysql\', \'performance_schema\', \'sys\')';
+      const params = schemaFilter ? [schemaFilter, topN] : [topN];
+      const sql = `
+        SELECT
+          DIGEST_TEXT AS normalized_query,
+          COALESCE(SCHEMA_NAME, '') AS schema_name,
+          COUNT_STAR AS execution_count,
+          SUM_TIMER_WAIT AS sum_timer_wait,
+          AVG_TIMER_WAIT AS avg_timer_wait,
+          MIN_TIMER_WAIT AS min_timer_wait,
+          MAX_TIMER_WAIT AS max_timer_wait
+        FROM performance_schema.events_statements_summary_by_digest
+        WHERE DIGEST_TEXT IS NOT NULL AND DIGEST_TEXT != ''
+        ${schemaCondition}
+        ORDER BY SUM_TIMER_WAIT DESC
+        LIMIT ?
+      `;
+
+      const [rows] = await connection.query(sql, params);
+      const list = (rows as any[]).map((row, index) => {
+        const sumPs = Number(row.sum_timer_wait ?? 0);
+        const avgPs = Number(row.avg_timer_wait ?? 0);
+        const minPs = Number(row.min_timer_wait ?? 0);
+        const maxPs = Number(row.max_timer_wait ?? 0);
+        const count = Number(row.execution_count ?? 0);
+        const normalizedQuery = String(row.normalized_query ?? '').trim() || '(empty)';
+        const databaseName = String(row.schema_name ?? '');
+        const hints = deriveHints(normalizedQuery, count, avgPs / 1e9);
+        return {
+          id: `digest_${index}`,
+          normalizedQuery,
+          sqlText: normalizedQuery,
+          executionCount: count,
+          avgTimeMs: avgPs / 1e6,
+          totalTimeMs: sumPs / 1e6,
+          minTimeMs: minPs / 1e6,
+          maxTimeMs: maxPs / 1e6,
+          databaseName,
+          hints
+        };
+      });
+
+      return { success: true, queries: list };
+    } catch (error: any) {
+      console.error('getSlowQueries error:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to fetch slow queries'
+      };
+    } finally {
+      if (connection) {
+        await connection.end();
+      }
+    }
+  }
+}
+
+function deriveHints(normalizedQuery: string, executionCount: number, avgTimeSec: number): string[] {
+  const hints: string[] = [];
+  const q = normalizedQuery.toUpperCase();
+  if (q.includes('SELECT *') && !q.includes('COUNT(*)')) {
+    hints.push('Avoid SELECT *; list only required columns');
+  }
+  if (q.includes('ORDER BY') && (q.includes('WHERE') || q.includes('JOIN'))) {
+    hints.push('Consider an index that supports the WHERE and ORDER BY columns');
+  }
+  if (executionCount > 10000 && avgTimeSec > 0.01) {
+    hints.push('High execution count; consider caching or batching');
+  }
+  if (avgTimeSec > 1) {
+    hints.push('High average time; review execution plan and indexes');
+  }
+  if (hints.length === 0) {
+    hints.push('Review execution plan (EXPLAIN) and index usage');
+  }
+  return hints;
 }
 
 export const databaseService = new DatabaseService();

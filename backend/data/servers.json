@@ -1,6 +1,6 @@
 [
   {
-    "name": "dev",
+    "name": "Local",
     "environment": "development",
     "host": "localhost",
     "port": 3306,
@@ -9,8 +9,36 @@
     "password": "Apple#123",
     "isActive": true,
     "connectionStatus": "disconnected",
-    "id": "server_1767173032298_smnudsemu",
-    "createdAt": "2025-12-31T09:23:52.298Z",
-    "updatedAt": "2025-12-31T09:23:52.298Z"
+    "id": "server_1769843817197_zf9wkq892",
+    "createdAt": "2026-01-31T07:16:57.197Z",
+    "updatedAt": "2026-02-04T13:03:03.570Z"
+  },
+  {
+    "name": "Freight_DEV",
+    "environment": "staging",
+    "host": "voltusfreight-dev1.cx2gsaaem9zc.ap-south-1.rds.amazonaws.com",
+    "port": 3306,
+    "databaseType": "mysql",
+    "username": "admin",
+    "password": "Voltus#123",
+    "isActive": true,
+    "connectionStatus": "disconnected",
+    "id": "server_1769873982360_w372dwbhl",
+    "createdAt": "2026-01-31T15:39:42.360Z",
+    "updatedAt": "2026-02-04T13:02:47.474Z"
+  },
+  {
+    "id": "server_1770203225346_apkxy1v83",
+    "name": "Freight_QA",
+    "environment": "development",
+    "host": "voltus-platform2.cdsmagsms0d7.ap-south-1.rds.amazonaws.com",
+    "port": 3306,
+    "databaseType": "mysql",
+    "username": "admin",
+    "password": "Sasipaul#123",
+    "isActive": true,
+    "connectionStatus": "disconnected",
+    "createdAt": "2026-02-04T11:07:05.346Z",
+    "updatedAt": "2026-02-04T13:02:28.714Z"
   }
 ]

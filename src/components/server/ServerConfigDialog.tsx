@@ -30,6 +30,7 @@ import { ServerConfig, EnvironmentType, DatabaseType } from '@/types/backup.type
 import { useEffect } from 'react';
 import { Loader2, Wifi } from 'lucide-react';
 import { useState } from 'react';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const serverSchema = z.object({
   name: z.string().min(3, 'Name must be at least 3 characters'),
@@ -39,6 +40,7 @@ const serverSchema = z.object({
   databaseType: z.enum(['mysql', 'mssql', 'postgresql']),
   username: z.string().min(1, 'Username is required'),
   password: z.string().min(1, 'Password is required'),
+  saveCredentials: z.boolean().default(true),
   isActive: z.boolean().default(true),
 });
 
@@ -48,7 +50,7 @@ interface ServerConfigDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   server: ServerConfig | null;
-  onSave: (data: Omit<ServerConfig, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  onSave: (data: Omit<ServerConfig, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
 }
 
 export function ServerConfigDialog({
@@ -59,6 +61,7 @@ export function ServerConfigDialog({
 }: ServerConfigDialogProps) {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const form = useForm<ServerFormValues>({
     resolver: zodResolver(serverSchema),
@@ -70,6 +73,7 @@ export function ServerConfigDialog({
       databaseType: 'mysql',
       username: import.meta.env.VITE_DB_USER || '',
       password: import.meta.env.VITE_DB_PASSWORD || '',
+      saveCredentials: true,
       isActive: true,
     },
   });
@@ -84,6 +88,7 @@ export function ServerConfigDialog({
         databaseType: server.databaseType,
         username: server.username,
         password: server.password,
+        saveCredentials: true,
         isActive: server.isActive,
       });
     } else {
@@ -95,10 +100,12 @@ export function ServerConfigDialog({
         databaseType: 'mysql',
         username: import.meta.env.VITE_DB_USER || '',
         password: import.meta.env.VITE_DB_PASSWORD || '',
+        saveCredentials: true,
         isActive: true,
       });
     }
     setTestResult(null);
+    setIsSubmitting(false);
   }, [server, form, open]);
 
   const handleTestConnection = async () => {
@@ -111,7 +118,8 @@ export function ServerConfigDialog({
     setIsTesting(false);
   };
 
-  const onSubmit = (data: ServerFormValues) => {
+  const onSubmit = async (data: ServerFormValues) => {
+    setIsSubmitting(true);
     const serverData: Omit<ServerConfig, 'id' | 'createdAt' | 'updatedAt'> = {
       name: data.name,
       environment: data.environment,
@@ -123,8 +131,15 @@ export function ServerConfigDialog({
       isActive: data.isActive,
       connectionStatus: 'disconnected',
     };
-    onSave(serverData);
-    form.reset();
+    try {
+      await onSave(serverData);
+      form.reset();
+    } catch (error) {
+      // Error is already handled in onSave, just don't reset the form
+      console.error('Failed to save server:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const databaseType = form.watch('databaseType');
@@ -276,6 +291,29 @@ export function ServerConfigDialog({
               />
             </div>
 
+            <FormField
+              control={form.control}
+              name="saveCredentials"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start space-x-3 space-y-0">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                  <div className="space-y-1 leading-none">
+                    <FormLabel className="text-sm font-normal cursor-pointer">
+                      Save credentials with this server
+                    </FormLabel>
+                    <p className="text-xs text-muted-foreground">
+                      Store credentials so you can connect without re-entering them. Server will appear in your list below.
+                    </p>
+                  </div>
+                </FormItem>
+              )}
+            />
+
             <div className="flex items-center gap-2 pt-2">
               <Button
                 type="button"
@@ -303,11 +341,23 @@ export function ServerConfigDialog({
             </div>
 
             <DialogFooter className="pt-4">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              <Button 
+                type="button" 
+                variant="outline" 
+                onClick={() => onOpenChange(false)}
+                disabled={isSubmitting}
+              >
                 Cancel
               </Button>
-              <Button type="submit">
-                {server ? 'Update Server' : 'Add Server'}
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {server ? 'Updating...' : 'Adding...'}
+                  </>
+                ) : (
+                  server ? 'Update Server' : 'Add Server'
+                )}
               </Button>
             </DialogFooter>
           </form>

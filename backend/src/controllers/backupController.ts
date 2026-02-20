@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { databaseService } from '../services/databaseService.js';
 import { writeFile, mkdir, readFile } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { config } from '../config/env.js';
 import { existsSync } from 'fs';
 
@@ -120,6 +120,86 @@ export class BackupController {
   }
 
   /**
+   * Create a new database on a server
+   */
+  async createDatabase(req: Request, res: Response): Promise<void> {
+    try {
+      const { host, port, user, password, type, databaseName } = req.body;
+
+      if (!host || !port || !user || !password || !type || !databaseName) {
+        res.status(400).json({
+          success: false,
+          message: 'Missing required fields: host, port, user, password, type, databaseName'
+        });
+        return;
+      }
+
+      await databaseService.createDatabase(
+        {
+          id: '',
+          host,
+          port: parseInt(port),
+          user,
+          password,
+          type
+        },
+        databaseName
+      );
+
+      res.json({
+        success: true,
+        message: `Database "${databaseName}" created successfully`
+      });
+    } catch (error: any) {
+      console.error('createDatabase error:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to create database'
+      });
+    }
+  }
+
+  /**
+   * Drop a database on a server
+   */
+  async dropDatabase(req: Request, res: Response): Promise<void> {
+    try {
+      const { host, port, user, password, type, databaseName } = req.body;
+
+      if (!host || !port || !user || !password || !type || !databaseName) {
+        res.status(400).json({
+          success: false,
+          message: 'Missing required fields: host, port, user, password, type, databaseName'
+        });
+        return;
+      }
+
+      await databaseService.dropDatabase(
+        {
+          id: '',
+          host,
+          port: parseInt(port),
+          user,
+          password,
+          type
+        },
+        databaseName
+      );
+
+      res.json({
+        success: true,
+        message: `Database "${databaseName}" dropped successfully`
+      });
+    } catch (error: any) {
+      console.error('dropDatabase error:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to drop database'
+      });
+    }
+  }
+
+  /**
    * Get database schema
    */
   async getDatabaseSchema(req: Request, res: Response): Promise<void> {
@@ -195,6 +275,19 @@ export class BackupController {
         return;
       }
 
+      if (type !== 'mysql') {
+        res.status(400).json({
+          success: false,
+          message: 'Only MySQL is supported for backup. Other database types are not yet implemented.'
+        });
+        return;
+      }
+
+      // Use config default when destination is empty or invalid
+      const backupDirectory = (destinationPath && String(destinationPath).trim())
+        ? String(destinationPath).trim()
+        : config.backup.storagePath;
+
       // Execute backup
       const sqlDump = await databaseService.executeBackup(
         {
@@ -219,10 +312,7 @@ export class BackupController {
 
       // Save to file
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const backupFileName = fileName || `backup_${database}_${timestamp}.sql`;
-
-      // Use provided destinationPath or fallback to config
-      const backupDirectory = destinationPath || config.backup.storagePath;
+      const backupFileName = (fileName && String(fileName).trim()) || `backup_${database}_${timestamp}.sql`;
       const backupPath = join(backupDirectory, backupFileName);
 
       // Ensure backup directory exists
@@ -333,8 +423,13 @@ export class BackupController {
       // Generate unique restore ID
       const restoreId = `restore_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 
+      // Resolve backup file path (support relative paths from backup storage or cwd)
+      const resolvedPath = backupFilePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(backupFilePath)
+        ? backupFilePath
+        : resolve(process.cwd(), backupFilePath);
+
       // Read the backup file
-      const sqlContent = await readBackupFile(backupFilePath, 'utf-8');
+      const sqlContent = await readBackupFile(resolvedPath, 'utf-8');
 
       // Count objects using the same logic as the restore function
       // We need to parse statements the same way to get accurate counts

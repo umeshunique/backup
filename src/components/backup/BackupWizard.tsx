@@ -97,7 +97,7 @@ const initialState: BackupWizardState = {
     includeComments: true,
     includeTimestampHeader: true,
   },
-  destinationPath: '/var/backups/db-manager',
+  destinationPath: '',
   fileNamingPattern: '{database}_{timestamp}.sql',
   retentionDays: 30,
   autoDeleteOld: true,
@@ -115,19 +115,15 @@ export function BackupWizard() {
   const canProceed = () => {
     switch (currentStep) {
       case 0:
-        return wizardState.serverId && wizardState.database;
+        return !!wizardState.serverId && !!wizardState.database;
       case 1:
-        return (
-          wizardState.selectedTables.length > 0 ||
-          wizardState.selectedProcedures.length > 0 ||
-          wizardState.selectedViews.length > 0 ||
-          wizardState.selectedFunctions.length > 0 ||
-          wizardState.selectedTriggers.length > 0
-        );
+        // Allow proceeding with just database selected (full backup) or any scope selection
+        return !!wizardState.database;
       case 2:
         return true;
       case 3:
-        return wizardState.destinationPath && wizardState.fileNamingPattern;
+        // destinationPath can be empty (backend uses default storage path)
+        return !!wizardState.fileNamingPattern;
       case 4:
         return true;
       default:

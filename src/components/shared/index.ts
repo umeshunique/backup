@@ -3,3 +3,4 @@ export { StatusBadge } from './StatusBadge';
 export { StatisticsCard } from './StatisticsCard';
 export { ProgressIndicator, CircularProgress } from './ProgressIndicator';
 export { LogViewer } from './LogViewer';
+export { ActivityLog, type ActivityLogEntry, type ActivityType, type ActivityStatus } from "./ActivityLog";

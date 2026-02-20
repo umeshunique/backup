@@ -256,7 +256,7 @@ export function DataModelViewer({ server, database }: DataModelViewerProps) {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => loadDatabaseSchema(server.id, database)}
+                onClick={() => loadDatabaseSchema(server.id, database, true)}
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Refresh

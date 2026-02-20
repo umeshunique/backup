@@ -60,6 +60,36 @@ Your Database Backup Manager application now has **REAL API integration** instea
 
 ---
 
+## Multi-Server & Multi-Database
+
+The app supports **multiple servers** and **multiple databases per server**. The connection context is global and shared across database screens.
+
+### Flow
+1. **ServerDatabaseBar** – Lists servers, loads databases when you click a server. Selection updates the store.
+2. **CompactContextBar** – On database screens, shows `Server / Database` and "Change connection".
+3. **Database screens** – Read `selectedServerId` and `selectedDatabaseName` from the store. Changes sync back so the bar and screens stay aligned.
+
+### Store (`backupStore`)
+- `selectedServerId`, `selectedDatabaseName` – current connection
+- `selectServer(id)`, `selectDatabase(name)` – update selection
+- `loadDatabasesForServer(serverId)` – fetch databases for a server
+- `getConnectionConfig()` – build `{ host, port, user, password, database, type }` for API calls
+
+### Hook (`useConnectionContext`)
+Use in database screens (SQL Editor, Data Editor, ER Diagram, etc.):
+
+```ts
+import { useConnectionContext } from '@/hooks/useConnectionContext';
+
+const { serverId, databaseName, server, databases, selectServer, selectDatabase, getConnectionConfig, getExecuteOptions } = useConnectionContext();
+
+// Build API options for executeQuery, getSchema, etc.
+const opts = getExecuteOptions();
+if (opts) await apiClient.executeQuery({ ...opts, query: 'SELECT 1' });
+```
+
+---
+
 ## Backend API Setup
 
 ### 1. Server Status

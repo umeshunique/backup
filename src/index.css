@@ -126,8 +126,15 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+
   #root {
-    min-height: 100vh;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -136,6 +143,11 @@
 
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Keyboard focus for accessibility */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 }
 
@@ -236,4 +248,171 @@
   );
   background-size: 1rem 1rem;
   animation: progress-stripe 1s linear infinite;
+}
+
+/* Stored Procedure Debugger */
+.debugger-code-comment {
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+.debugger-code-keyword {
+  color: hsl(262 83% 58%);
+  font-weight: 500;
+}
+
+.debugger-code-string {
+  color: hsl(142 71% 45%);
+}
+
+.debugger-current-line-gutter {
+  background: hsl(var(--primary) / 0.2);
+  border-left: 3px solid hsl(var(--primary));
+}
+
+.debugger-output-info {
+  color: hsl(217 91% 60%);
+}
+
+.debugger-output-warn {
+  color: hsl(38 92% 50%);
+}
+
+.debugger-output-error {
+  color: hsl(0 72% 51%);
+}
+
+@keyframes debugger-line-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+.debugger-line-current {
+  animation: debugger-line-pulse 1.5s ease-in-out infinite;
+}
+
+/* SQL Editor – align highlight layer with textarea so selection/cursor match rendered text */
+.sql-editor-prism pre,
+.sql-editor-prism textarea {
+  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+  font-size: 0.875rem !important;
+  line-height: 1.625 !important;
+  letter-spacing: normal !important;
+  tab-size: 2 !important;
+}
+
+/* SQL Editor – Prism syntax highlighting (theme-aware) */
+.sql-editor-prism .token.comment,
+.sql-editor-prism .token.prolog,
+.sql-editor-prism .token.doctype,
+.sql-editor-prism .token.cdata {
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+.sql-editor-prism .token.keyword,
+.sql-editor-prism .token.operator.sql,
+.sql-editor-prism .token.atrule {
+  color: hsl(262 83% 58%);
+  font-weight: 500;
+}
+.sql-editor-prism .token.string,
+.sql-editor-prism .token.attr-value {
+  color: hsl(142 56% 42%);
+}
+.sql-editor-prism .token.number,
+.sql-editor-prism .token.boolean {
+  color: hsl(38 92% 45%);
+}
+.sql-editor-prism .token.function,
+.sql-editor-prism .token.class-name {
+  color: hsl(217 91% 55%);
+}
+.sql-editor-prism .token.punctuation {
+  color: hsl(var(--foreground) / 0.75);
+}
+.sql-editor-prism .token.property,
+.sql-editor-prism .token.tag {
+  color: hsl(0 72% 51%);
+}
+.sql-editor-prism .token.attr-name {
+  color: hsl(199 89% 48%);
+}
+.sql-editor-prism .token.variable {
+  color: hsl(var(--foreground));
+}
+.sql-editor-prism .token.important {
+  color: hsl(0 72% 51%);
+  font-weight: 600;
+}
+.sql-editor-prism .token.regex {
+  color: hsl(142 71% 45%);
+}
+.sql-editor-prism .token.entity {
+  color: hsl(38 92% 50%);
+}
+
+/* SQL Results table – borders and grid */
+.sql-results-table .sql-results-table-grid thead tr th {
+  border-color: hsl(var(--border));
+}
+.sql-results-table .sql-results-table-grid tbody td {
+  border-color: hsl(var(--border) / 0.6);
+}
+
+/* SQL Editor – DataGrip-style layout: query 35% viewport (min 250px, max 500px), results fill rest */
+:root {
+  --sql-editor-query-height: clamp(250px, 35vh, 500px);
+}
+
+/* SQL Editor root container – fill viewport, no page scroll */
+.sql-editor-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+/* Query editor: 35% viewport (min 250px, max 500px), fits in panel; vertical scroll only */
+.sql-editor-query-area {
+  height: var(--sql-editor-query-height);
+  min-height: 120px;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted)) transparent;
+}
+.sql-editor-query-area::-webkit-scrollbar {
+  width: 6px;
+}
+.sql-editor-query-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sql-editor-query-area::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted));
+  border-radius: 3px;
+}
+
+/* Results grid: fill remaining viewport, scroll both axes, single scroll container */
+.sql-editor-results-area {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted)) transparent;
+}
+.sql-editor-results-area::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.sql-editor-results-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sql-editor-results-area::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted));
+  border-radius: 3px;
 }

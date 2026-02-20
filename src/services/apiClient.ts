@@ -26,10 +26,21 @@ async function apiRequest<T>(
     },
   });
 
-  const data = await response.json();
+  const text = await response.text();
+  let data: T;
+  try {
+    data = (text ? JSON.parse(text) : {}) as T;
+  } catch {
+    // Non-JSON response (e.g. HTML error pages, plain text)
+    if (!response.ok) {
+      throw new Error(text || `API request failed: ${response.statusText}`);
+    }
+    throw new Error(`Invalid response: expected JSON`);
+  }
 
   if (!response.ok) {
-    throw new Error(data.message || `API request failed: ${response.statusText}`);
+    const message = (data as { message?: string }).message || text || `API request failed: ${response.statusText}`;
+    throw new Error(message);
   }
 
   return data;
@@ -144,6 +155,32 @@ export const apiClient = {
     return apiRequest('/api/backup/schema', {
       method: 'POST',
       body: JSON.stringify({ ...config, database }),
+    });
+  },
+
+  /**
+   * Create a new database on a server
+   */
+  async createDatabase(
+    config: ServerConnectionConfig,
+    databaseName: string
+  ): Promise<{ success: boolean; message: string }> {
+    return apiRequest('/api/backup/create-database', {
+      method: 'POST',
+      body: JSON.stringify({ ...config, databaseName }),
+    });
+  },
+
+  /**
+   * Drop a database on a server
+   */
+  async dropDatabase(
+    config: ServerConnectionConfig,
+    databaseName: string
+  ): Promise<{ success: boolean; message: string }> {
+    return apiRequest('/api/backup/drop-database', {
+      method: 'POST',
+      body: JSON.stringify({ ...config, databaseName }),
     });
   },
 
@@ -300,6 +337,13 @@ export const apiClient = {
   },
 
   /**
+   * Optional callback for Action Output log (set by app to record executed queries).
+   */
+  setOnQueryExecuted(cb: ((entry: { action: string; message: string; durationMs: number }) => void) | undefined) {
+    (this as { _onQueryExecuted?: (entry: { action: string; message: string; durationMs: number }) => void })._onQueryExecuted = cb;
+  },
+
+  /**
    * Execute arbitrary SQL query
    */
   async executeQuery(options: {
@@ -313,14 +357,124 @@ export const apiClient = {
   }): Promise<{
     success: boolean;
     columns?: string[];
+    columnTypes?: string[];
     rows?: any[];
     affectedRows?: number;
     message?: string;
     error?: string;
   }> {
-    return apiRequest('/api/backup/execute-query', {
+    const start = Date.now();
+    const result = await apiRequest<{
+      success: boolean;
+      columns?: string[];
+      columnTypes?: string[];
+      rows?: any[];
+      affectedRows?: number;
+      message?: string;
+      error?: string;
+    }>('/api/backup/execute-query', {
       method: 'POST',
       body: JSON.stringify(options),
     });
+    const durationMs = Date.now() - start;
+    const actionSnippet = options.query.trim().slice(0, 80) + (options.query.trim().length > 80 ? '…' : '');
+    const message = result.rows != null
+      ? `${result.rows.length} row(s) returned`
+      : result.affectedRows != null
+        ? `${result.affectedRows} row(s) affected`
+        : result.message ?? 'OK';
+    (this as { _onQueryExecuted?: (e: { action: string; message: string; durationMs: number }) => void })._onQueryExecuted?.({ action: actionSnippet, message, durationMs });
+    return result;
+  },
+
+  // ==================== Schema Version Control ====================
+
+  /**
+   * Fetch branches from a GitHub repo URL (for Connect / Refresh)
+   */
+  async fetchRemoteBranches(
+    repoUrl: string,
+    githubToken?: string
+  ): Promise<{
+    success: boolean;
+    branches: { name: string; isCurrent: boolean; lastCommit: string; lastMessage: string }[];
+  }> {
+    return apiRequest('/api/schema-version/fetch-remote-branches', {
+      method: 'POST',
+      body: JSON.stringify({ repoUrl: repoUrl.trim(), githubToken: githubToken?.trim() || undefined }),
+    });
+  },
+
+  /**
+   * Get repository and branches for a connection
+   */
+  async getSchemaVersion(serverId: string, database: string): Promise<{
+    success: boolean;
+    data: {
+      repoPath: string;
+      connected: boolean;
+      branches: { name: string; isCurrent: boolean; lastCommit: string; lastMessage: string }[];
+      commits: { hash: string; message: string; author: string; date: string }[];
+      uncommitted: { path: string; type: string; summary: string }[];
+    };
+  }> {
+    const params = new URLSearchParams({ serverId, database });
+    return apiRequest(`/api/schema-version?${params}`, { method: 'GET' });
+  },
+
+  /**
+   * Update repository and/or branches for a connection
+   */
+  async updateSchemaVersion(
+    serverId: string,
+    database: string,
+    updates: {
+      repoPath?: string;
+      connected?: boolean;
+      branches?: { name: string; isCurrent: boolean; lastCommit: string; lastMessage: string }[];
+      commits?: { hash: string; message: string; author: string; date: string }[];
+      uncommitted?: { path: string; type: string; summary: string }[];
+    }
+  ): Promise<{
+    success: boolean;
+    data: {
+      repoPath: string;
+      connected: boolean;
+      branches: { name: string; isCurrent: boolean; lastCommit: string; lastMessage: string }[];
+      commits: { hash: string; message: string; author: string; date: string }[];
+      uncommitted: { path: string; type: string; summary: string }[];
+    };
+  }> {
+    return apiRequest('/api/schema-version', {
+      method: 'PUT',
+      body: JSON.stringify({ serverId, database, ...updates }),
+    });
+  },
+
+  /**
+   * Get top N slow queries for a server (MySQL performance_schema).
+   */
+  async getSlowQueries(
+    serverId: string,
+    options?: { database?: string | null; topN?: number }
+  ): Promise<{
+    success: boolean;
+    queries: Array<{
+      id: string;
+      normalizedQuery: string;
+      sqlText: string;
+      executionCount: number;
+      avgTimeMs: number;
+      totalTimeMs: number;
+      minTimeMs: number;
+      maxTimeMs: number;
+      databaseName: string;
+      hints: string[];
+    }>;
+  }> {
+    const params = new URLSearchParams({ serverId });
+    if (options?.database) params.set('database', options.database);
+    if (options?.topN != null) params.set('topN', String(options.topN));
+    return apiRequest(`/api/slow-queries?${params}`, { method: 'GET' });
   },
 };

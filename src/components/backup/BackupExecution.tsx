@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { formatDuration, formatBytes } from '@/utils/mockData';
 import { apiClient } from '@/services/apiClient';
+import { format } from 'date-fns';
 
 interface BackupExecutionProps {
   wizardState: BackupWizardState;
@@ -86,8 +87,16 @@ export function BackupExecution({ wizardState, onComplete }: BackupExecutionProp
         return;
       }
 
+      if (!server.password) {
+        addLog('error', 'Server credentials not available. Please re-select the server or edit connection.');
+        setPhase('failed');
+        return;
+      }
+
       const totalRows = wizardState.database?.tables
-        .filter((t) => wizardState.selectedTables.includes(t.name))
+        .filter((t) =>
+          wizardState.selectedTables.length === 0 || wizardState.selectedTables.includes(t.name)
+        )
         .reduce((acc, t) => acc + t.rowCount, 0) || 0;
 
       setStats((prev) => ({ ...prev, totalObjects, totalRows }));
@@ -100,11 +109,26 @@ export function BackupExecution({ wizardState, onComplete }: BackupExecutionProp
 
       const startTime = Date.now();
 
+      // Generate fileName from pattern (backend uses this or generates one)
+      const now = new Date();
+      const dbName = wizardState.database.name;
+      const env = wizardState.environment || 'development';
+      const fileName = (wizardState.fileNamingPattern || '{database}_{timestamp}.sql')
+        .replace(/{database}/g, dbName)
+        .replace(/{environment}/g, env)
+        .replace(/{timestamp}/g, format(now, 'yyyyMMdd_HHmmss'))
+        .replace(/{date}/g, format(now, 'yyyy-MM-dd'))
+        .replace(/{time}/g, format(now, 'HH-mm-ss'))
+        .replace(/{YYYYMMDD}/g, format(now, 'yyyyMMdd'))
+        .replace(/HHmmss/g, format(now, 'HHmmss'));
+
+      // Use backend default storage when path is empty
+      const destinationPath = wizardState.destinationPath?.trim() || undefined;
+
       try {
-        // Call the real API to execute backup
         const result = await apiClient.executeBackup({
           host: server.host,
-          port: server.port,
+          port: Number(server.port),
           user: server.username,
           password: server.password,
           type: server.databaseType,
@@ -116,7 +140,8 @@ export function BackupExecution({ wizardState, onComplete }: BackupExecutionProp
           includeTriggers: wizardState.selectedTriggers.length > 0,
           includeFunctions: wizardState.selectedFunctions.length > 0,
           tables: wizardState.selectedTables.length > 0 ? wizardState.selectedTables : undefined,
-          destinationPath: wizardState.destinationPath,
+          fileName,
+          destinationPath,
         });
 
         const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
@@ -305,8 +330,18 @@ export function BackupExecution({ wizardState, onComplete }: BackupExecutionProp
         />
         <StatisticsCard
           title="Rows Exported"
-          value={`${(stats.processedRows / 1000000).toFixed(2)}M`}
-          subtitle={`of ${(stats.totalRows / 1000000).toFixed(2)}M total`}
+          value={
+            stats.totalRows >= 1_000_000
+              ? `${(stats.processedRows / 1_000_000).toFixed(2)}M`
+              : stats.totalRows >= 1000
+                ? `${(stats.processedRows / 1000).toFixed(1)}K`
+                : stats.processedRows.toLocaleString()
+          }
+          subtitle={
+            stats.totalRows > 0
+              ? `of ${stats.totalRows >= 1_000_000 ? `${(stats.totalRows / 1_000_000).toFixed(2)}M` : stats.totalRows >= 1000 ? `${(stats.totalRows / 1000).toFixed(1)}K` : stats.totalRows} total`
+              : undefined
+          }
           icon={FileCode}
           variant="default"
         />
@@ -319,7 +354,7 @@ export function BackupExecution({ wizardState, onComplete }: BackupExecutionProp
         <StatisticsCard
           title="Elapsed Time"
           value={formatDuration(stats.elapsedSeconds)}
-          subtitle={`${stats.rowsPerSecond.toLocaleString()} rows/sec`}
+          subtitle={stats.totalRows > 0 && stats.elapsedSeconds > 0 ? `${stats.rowsPerSecond.toLocaleString()} rows/sec` : undefined}
           icon={Clock}
           variant="default"
         />

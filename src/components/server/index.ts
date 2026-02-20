@@ -1,3 +1,11 @@
 export { ServerList } from './ServerList';
 export { ServerConfigDialog } from './ServerConfigDialog';
+export { ServerConfigWizard } from './ServerConfigWizard';
 export { ServersPage } from './ServersPage';
+export { ServerMonitoring } from './ServerMonitoring';
+export { SqlEditor } from './SqlEditor';
+export { TablesBrowser } from './TablesBrowser';
+export { ProceduresBrowser } from './ProceduresBrowser';
+export { ViewsBrowser } from './ViewsBrowser';
+export { FunctionsBrowser } from './FunctionsBrowser';
+export { TriggersBrowser } from './TriggersBrowser';

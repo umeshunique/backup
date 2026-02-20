@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dialog';
 import {
   Download,
+  FileDown,
   ZoomIn,
   ZoomOut,
   Maximize2,
@@ -35,6 +36,7 @@ import {
   Move,
   Key,
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
 import { ServerConfig, DatabaseTable, TableConstraint } from '@/types/backup.types';
 import { useBackupStore } from '@/store/backupStore';
 import { toast } from '@/hooks/use-toast';
@@ -218,30 +220,17 @@ export function EnhancedDataModelViewer({ server, database }: EnhancedDataModelV
     // Helper function to get column Y position in table
     const getColumnYPosition = (tableName: string, columnName: string): number => {
       const table = tables.find(t => t.name === tableName);
-      if (!table || !table.columns) {
-        console.log(`Table not found: ${tableName}`);
-        return 60;
-      }
-
+      if (!table || !table.columns) return 60;
       const { pkColumns, fkColumns, ukColumns, regularColumns } = getColumnsByType(table);
       const allColumns = [...pkColumns, ...fkColumns, ...ukColumns, ...regularColumns];
       const columnIndex = allColumns.findIndex(col => col.name === columnName);
-
-      if (columnIndex === -1) {
-        console.log(`Column ${columnName} not found in table ${tableName}`);
-        console.log('Available columns:', allColumns.map(c => c.name));
-        return 60;
-      }
+      if (columnIndex === -1) return 60;
 
       // Each column row is approximately 28px (py-1.5 px-2), header is 48px
       const headerHeight = 48;
       const rowHeight = 28;
-      const yPos = headerHeight + (columnIndex * rowHeight) + (rowHeight / 2);
-      console.log(`Column ${columnName} in ${tableName}: index=${columnIndex}, yPos=${yPos}`);
-      return yPos;
+      return headerHeight + (columnIndex * rowHeight) + (rowHeight / 2);
     };
-
-    console.log('Drawing relationships:', relationships.length);
 
     // Filter relationships to only show between visible tables
     const visibleTableNames = new Set(filteredTables.map(t => t.name));
@@ -249,11 +238,8 @@ export function EnhancedDataModelViewer({ server, database }: EnhancedDataModelV
       visibleTableNames.has(rel.fromTable) && visibleTableNames.has(rel.toTable)
     );
 
-    console.log('Drawing relationships:', visibleRelationships.length, 'of', relationships.length);
-
     // Draw relationships
     visibleRelationships.forEach(rel => {
-      console.log('Relationship:', rel);
       const fromPos = tablePositions.find(p => p.id === rel.fromTable);
       const toPos = tablePositions.find(p => p.id === rel.toTable);
 
@@ -265,8 +251,6 @@ export function EnhancedDataModelViewer({ server, database }: EnhancedDataModelV
         // Get PK column position (to table)
         const toColumnName = rel.toColumns[0]; // Use first referenced column
         const toY = toPos.y + getColumnYPosition(rel.toTable, toColumnName);
-
-        console.log(`Drawing line from ${rel.fromTable}.${fromColumnName} (y=${fromY}) to ${rel.toTable}.${toColumnName} (y=${toY})`);
 
         // Connection points (right side of from table, left side of to table)
         const fromX = fromPos.x + 300;
@@ -388,10 +372,11 @@ export function EnhancedDataModelViewer({ server, database }: EnhancedDataModelV
     }
   };
 
-  const handleDownload = () => {
+  /** Build export canvas for PNG/PDF. Returns null if context unavailable. */
+  const buildExportCanvas = (): { canvas: HTMLCanvasElement; width: number; height: number } | null => {
     const exportCanvas = document.createElement('canvas');
     const ctx = exportCanvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) return null;
 
     // Calculate bounds
     let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
@@ -533,15 +518,33 @@ export function EnhancedDataModelViewer({ server, database }: EnhancedDataModelV
       }
     });
 
+    return { canvas: exportCanvas, width, height };
+  };
+
+  const handleDownload = () => {
+    const result = buildExportCanvas();
+    if (!result) return;
+    const { canvas } = result;
     const link = document.createElement('a');
     link.download = `${database}_datamodel_${new Date().toISOString().split('T')[0]}.png`;
-    link.href = exportCanvas.toDataURL('image/png');
+    link.href = canvas.toDataURL('image/png');
     link.click();
+    toast({ title: "Success", description: "Data model diagram downloaded successfully" });
+  };
 
-    toast({
-      title: "Success",
-      description: "Data model diagram downloaded successfully",
+  const handleDownloadPdf = () => {
+    const result = buildExportCanvas();
+    if (!result) return;
+    const { canvas, width, height } = result;
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: width > height ? 'landscape' : 'portrait',
+      unit: 'px',
+      format: [Math.max(width, 400), Math.max(height, 300)],
     });
+    pdf.addImage(imgData, 'PNG', 0, 0, width, height);
+    pdf.save(`${database}_datamodel_${new Date().toISOString().split('T')[0]}.pdf`);
+    toast({ title: "Success", description: "Data model diagram exported as PDF" });
   };
 
   const handleMouseDown = (e: React.MouseEvent, tableId?: string) => {
@@ -789,9 +792,13 @@ export function EnhancedDataModelViewer({ server, database }: EnhancedDataModelV
                 {isFullscreen ? <Minimize2 className="h-4 w-4 mr-2" /> : <Maximize2 className="h-4 w-4 mr-2" />}
                 {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
               </Button>
-              <Button size="sm" onClick={handleDownload}>
+              <Button size="sm" variant="outline" onClick={handleDownload}>
                 <Download className="h-4 w-4 mr-2" />
-                Download
+                PNG
+              </Button>
+              <Button size="sm" onClick={handleDownloadPdf}>
+                <FileDown className="h-4 w-4 mr-2" />
+                PDF
               </Button>
             </div>
           </div>

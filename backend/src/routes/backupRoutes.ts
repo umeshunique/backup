@@ -13,6 +13,12 @@ router.post('/test-connection', backupController.testConnection.bind(backupContr
 // Get list of databases
 router.post('/databases', backupController.getDatabases.bind(backupController));
 
+// Create database
+router.post('/create-database', backupController.createDatabase.bind(backupController));
+
+// Drop database
+router.post('/drop-database', backupController.dropDatabase.bind(backupController));
+
 // Get database schema
 router.post('/schema', backupController.getDatabaseSchema.bind(backupController));
 

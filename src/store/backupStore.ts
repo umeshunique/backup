@@ -14,6 +14,82 @@ import {
   BuildVersion,
 } from '@/types/backup.types';
 import { apiClient } from '@/services/apiClient';
+import { isScreenId, type ScreenId } from '@/config/navigationConfig';
+
+// Deduplicate in-flight API calls so multiple components mounting don't each trigger loadServers/loadBackupHistory
+let loadServersPromise: Promise<void> | null = null;
+let loadBackupHistoryPromise: Promise<void> | null = null;
+
+// Data comparison helpers (for table row diff + sync script)
+const DATA_ROW_LIMIT = 500;
+
+function getRowKey(row: Record<string, unknown>, keyColumns: string[]): string {
+  if (keyColumns.length > 0) {
+    return keyColumns.map((c) => String(row[c] ?? '')).join('|');
+  }
+  return Object.values(row).map((v) => String(v ?? '')).join('|');
+}
+
+function buildDataDiff(
+  sourceRows: Record<string, unknown>[],
+  targetRows: Record<string, unknown>[],
+  keyColumns: string[]
+): { status: 'removed' | 'modified' | 'added' | 'unchanged'; sourceRow: Record<string, unknown> | null; targetRow: Record<string, unknown> | null }[] {
+  const byKey = (rows: Record<string, unknown>[]) => {
+    const map = new Map<string, Record<string, unknown>>();
+    for (const row of rows) map.set(getRowKey(row, keyColumns), row);
+    return map;
+  };
+  const sourceMap = byKey(sourceRows);
+  const targetMap = byKey(targetRows);
+  const allKeys = new Set([...sourceMap.keys(), ...targetMap.keys()]);
+  const result: { status: 'removed' | 'modified' | 'added' | 'unchanged'; sourceRow: Record<string, unknown> | null; targetRow: Record<string, unknown> | null }[] = [];
+  for (const key of allKeys) {
+    const src = sourceMap.get(key) ?? null;
+    const tgt = targetMap.get(key) ?? null;
+    let status: 'removed' | 'modified' | 'added' | 'unchanged' = 'unchanged';
+    if (!src) status = 'added';
+    else if (!tgt) status = 'removed';
+    else if (JSON.stringify(src) !== JSON.stringify(tgt)) status = 'modified';
+    result.push({ status, sourceRow: src, targetRow: tgt });
+  }
+  return result;
+}
+
+function escapeSql(val: unknown): string {
+  if (val === null || val === undefined) return 'NULL';
+  if (typeof val === 'number') return String(val);
+  if (typeof val === 'boolean') return val ? '1' : '0';
+  return "'" + String(val).replace(/'/g, "''").replace(/\\/g, '\\\\') + "'";
+}
+
+function generateDataSyncScript(
+  diffRows: { status: string; sourceRow: Record<string, unknown> | null; targetRow: Record<string, unknown> | null }[],
+  tableName: string,
+  allColumns: string[],
+  keyColumns: string[]
+): string {
+  const lines: string[] = [];
+  const quotedTable = '`' + tableName.replace(/`/g, '``') + '`';
+  const pkCols = keyColumns.length > 0 ? keyColumns : allColumns.slice(0, 1);
+  for (const dr of diffRows) {
+    if (dr.status === 'removed' && dr.sourceRow) {
+      const row = dr.sourceRow;
+      const cols = allColumns.filter((c) => row[c] !== undefined);
+      if (cols.length === 0) continue;
+      const colList = cols.map((c) => '`' + c + '`').join(', ');
+      const valList = cols.map((c) => escapeSql(row[c])).join(', ');
+      lines.push(`INSERT INTO ${quotedTable} (${colList}) VALUES (${valList});`);
+    } else if (dr.status === 'modified' && dr.sourceRow && dr.targetRow) {
+      const row = dr.sourceRow;
+      const sets = allColumns.filter((c) => row[c] !== undefined).map((c) => '`' + c + '` = ' + escapeSql(row[c]));
+      if (sets.length === 0) continue;
+      const whereClause = pkCols.map((c) => '`' + c + '` = ' + escapeSql(dr.sourceRow![c])).join(' AND ');
+      lines.push(`UPDATE ${quotedTable} SET ${sets.join(', ')} WHERE ${whereClause};`);
+    }
+  }
+  return lines.join('\n');
+}
 
 interface BackupStore {
   // Data
@@ -26,7 +102,16 @@ interface BackupStore {
   // UI State
   selectedServerId: string | null;
   selectedDatabaseName: string | null;
-  activeTab: 'dashboard' | 'servers' | 'backup' | 'restore' | 'history' | 'settings' | 'compare' | 'release' | 'builds' | 'console';
+  /** Selected table name in explorer (for Object Info panel). */
+  selectedTableName: string | null;
+  activeTab: ScreenId;
+  /** Navigation history for Back/Forward */
+  screenHistory: ScreenId[];
+  historyIndex: number;
+  /** SQL to prefill in SQL Editor when navigating from e.g. Code Snippets Library */
+  sqlEditorInitialSql: string | null;
+  /** When true, Database Explorer is minimized so Query Editor can use full width (expand horizontal). */
+  databaseExplorerMinimized: boolean;
 
   // Schema Comparison State
   comparisonResult: SchemaComparisonResult | null;
@@ -45,22 +130,34 @@ interface BackupStore {
   currentExecution: BackupExecutionState | null;
   isExecuting: boolean;
 
+  // Action Output (query/execution log for bottom panel)
+  actionLogEntries: Array<{ id: string; time: string; action: string; message: string; duration: string }>;
+  addActionLogEntry: (entry: { action: string; message: string; durationMs: number }) => void;
+  clearActionLog: () => void;
+
   // Actions
-  setActiveTab: (tab: BackupStore['activeTab']) => void;
+  setActiveTab: (tab: ScreenId) => void;
+  goBack: () => void;
+  goForward: () => void;
+  setSqlEditorInitialSql: (sql: string | null) => void;
+  setDatabaseExplorerMinimized: (minimized: boolean) => void;
   selectServer: (serverId: string | null) => void;
   selectDatabase: (databaseName: string | null) => void;
+  setSelectedTableName: (tableName: string | null) => void;
 
   // Data Loading Actions
   loadServers: () => Promise<void>;
   loadBackupHistory: () => Promise<void>;
   loadDatabasesForServer: (serverId: string) => Promise<void>;
-  loadDatabaseSchema: (serverId: string, databaseName: string) => Promise<void>;
+  loadDatabaseSchema: (serverId: string, databaseName: string, forceReload?: boolean) => Promise<void>;
 
   // Server Actions
   addServer: (server: Omit<ServerConfig, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
   updateServer: (id: string, updates: Partial<ServerConfig>) => Promise<void>;
   deleteServer: (id: string) => Promise<void>;
   testConnection: (id: string) => Promise<boolean>;
+  createDatabase: (serverId: string, databaseName: string) => Promise<void>;
+  dropDatabase: (serverId: string, databaseName: string) => Promise<void>;
 
   // Backup Actions
   startBackup: (configId: string) => void;
@@ -123,10 +220,21 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
   scheduledBackups: [],
   databaseSchemas: {},
 
-  // Initial UI State
+  // Initial UI State - always start on SQL Editor (redirect on load handled in Index)
   selectedServerId: null,
   selectedDatabaseName: null,
-  activeTab: 'dashboard',
+  selectedTableName: null,
+  activeTab: 'sql-editor',
+  screenHistory: ['sql-editor'],
+  historyIndex: 0,
+  sqlEditorInitialSql: null,
+  databaseExplorerMinimized: (() => {
+    try {
+      return localStorage.getItem('database-explorer-minimized') === 'true';
+    } catch {
+      return false;
+    }
+  })(),
 
   // Initial Comparison State
   comparisonResult: null,
@@ -145,28 +253,95 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
   currentExecution: null,
   isExecuting: false,
 
-  // Tab Actions
-  setActiveTab: (tab) => set({ activeTab: tab }),
+  actionLogEntries: [],
+  addActionLogEntry: (entry) => {
+    const id = `al-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const time = new Date().toLocaleTimeString();
+    const duration = entry.durationMs >= 1000 ? `${(entry.durationMs / 1000).toFixed(2)} sec` : `${entry.durationMs} ms`;
+    set((s) => ({
+      actionLogEntries: [...s.actionLogEntries, { id, time, action: entry.action, message: entry.message, duration }].slice(-500),
+    }));
+  },
+  clearActionLog: () => set({ actionLogEntries: [] }),
 
-  // Selection Actions
-  selectServer: (serverId) => set({ selectedServerId: serverId, selectedDatabaseName: null }),
-  selectDatabase: (databaseName) => set({ selectedDatabaseName: databaseName }),
-
-  // Data Loading Actions
-  loadServers: async () => {
+  // Tab Actions (setActiveTab pushes to history for Back/Forward)
+  setActiveTab: (tab) => {
+    const { activeTab, screenHistory, historyIndex } = get();
+    if (tab === activeTab) return;
+    const newHistory = [...screenHistory.slice(0, historyIndex + 1), tab];
+    set({ activeTab: tab, screenHistory: newHistory, historyIndex: newHistory.length - 1 });
+  },
+  goBack: () => {
+    const { screenHistory, historyIndex } = get();
+    if (historyIndex <= 0) return;
+    const newIndex = historyIndex - 1;
+    set({ activeTab: screenHistory[newIndex], historyIndex: newIndex });
+  },
+  goForward: () => {
+    const { screenHistory, historyIndex } = get();
+    if (historyIndex >= screenHistory.length - 1) return;
+    const newIndex = historyIndex + 1;
+    set({ activeTab: screenHistory[newIndex], historyIndex: newIndex });
+  },
+  setSqlEditorInitialSql: (sql) => set({ sqlEditorInitialSql: sql }),
+  setDatabaseExplorerMinimized: (minimized) => {
+    set({ databaseExplorerMinimized: minimized });
     try {
-      const result = await apiClient.getAllServers();
-      if (result.success) {
-        set({ servers: result.servers });
-      }
-    } catch (error) {
-      console.error('Failed to load servers:', error);
+      localStorage.setItem('database-explorer-minimized', String(minimized));
+    } catch {
+      // ignore
     }
   },
 
-  loadBackupHistory: async () => {
+  // Selection Actions (persist for multi-session; restore in ServerDatabaseBar after loadServers)
+  selectServer: (serverId) => {
+    set({ selectedServerId: serverId, selectedDatabaseName: null, selectedTableName: null });
     try {
-      const result = await apiClient.getBackupHistory();
+      localStorage.setItem('backup-app-connection', JSON.stringify({
+        lastServerId: serverId ?? undefined,
+        lastDatabaseName: undefined,
+      }));
+    } catch {
+      // ignore
+    }
+  },
+  selectDatabase: (databaseName) => {
+    const state = get();
+    set({ selectedDatabaseName: databaseName, selectedTableName: null });
+    try {
+      localStorage.setItem('backup-app-connection', JSON.stringify({
+        lastServerId: state.selectedServerId ?? undefined,
+        lastDatabaseName: databaseName ?? undefined,
+      }));
+    } catch {
+      // ignore
+    }
+  },
+  setSelectedTableName: (tableName) => set({ selectedTableName: tableName }),
+
+  // Data Loading Actions (deduplicated: concurrent callers share the same request)
+  loadServers: async () => {
+    if (loadServersPromise) return loadServersPromise;
+    loadServersPromise = (async () => {
+      try {
+        const result = await apiClient.getAllServers();
+        if (result.success) {
+          set({ servers: result.servers });
+        }
+      } catch (error) {
+        console.error('Failed to load servers:', error);
+      } finally {
+        loadServersPromise = null;
+      }
+    })();
+    return loadServersPromise;
+  },
+
+  loadBackupHistory: async () => {
+    if (loadBackupHistoryPromise) return loadBackupHistoryPromise;
+    loadBackupHistoryPromise = (async () => {
+      try {
+        const result = await apiClient.getBackupHistory();
       if (result.success) {
         // Convert createdAt string to Date object with validation
         const history = result.history.map((backup: any) => {
@@ -200,7 +375,11 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
       }
     } catch (error) {
       console.error('Failed to load backup history:', error);
-    }
+    } finally {
+        loadBackupHistoryPromise = null;
+      }
+    })();
+    return loadBackupHistoryPromise;
   },
 
   loadDatabasesForServer: async (serverId: string) => {
@@ -225,21 +404,30 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
         return;
       }
 
-      // Create minimal schema objects with just database names
-      // Full details will be loaded when user selects a specific database
-      const schemas: DatabaseSchema[] = dbListResult.databases.map(dbName => ({
-        name: dbName,
-        sizeInMB: 0,
-        tableCount: 0,
-        tables: [],
-        procedures: [],
-        views: [],
-        functions: [],
-        triggers: [],
-        events: []
-      }));
+      // Preserve existing loaded schemas so we don't overwrite table count/tables with placeholders
+      const existingSchemas = get().databaseSchemas[serverId] || [];
 
-      // Update the databaseSchemas for this server
+      const hasSchemaObjects = (s: DatabaseSchema) =>
+        (s.tables?.length ?? 0) > 0 || (s.procedures?.length ?? 0) > 0 || (s.views?.length ?? 0) > 0 ||
+        (s.functions?.length ?? 0) > 0 || (s.triggers?.length ?? 0) > 0 || (s.events?.length ?? 0) > 0;
+      const schemas: DatabaseSchema[] = dbListResult.databases.map(dbName => {
+        const existing = existingSchemas.find(s => s.name === dbName);
+        if (existing && hasSchemaObjects(existing)) {
+          return existing;
+        }
+        return {
+          name: dbName,
+          sizeInMB: 0,
+          tableCount: 0,
+          tables: [],
+          procedures: [],
+          views: [],
+          functions: [],
+          triggers: [],
+          events: []
+        } as DatabaseSchema;
+      });
+
       set((state) => ({
         databaseSchemas: {
           ...state.databaseSchemas,
@@ -253,12 +441,28 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
     }
   },
 
-  loadDatabaseSchema: async (serverId: string, databaseName: string) => {
+  loadDatabaseSchema: async (serverId: string, databaseName: string, forceReload?: boolean) => {
     try {
       const server = get().servers.find(s => s.id === serverId);
       if (!server) {
         console.error('Server not found:', serverId);
         return;
+      }
+
+      // Skip API call if we already have full schema (tables, procedures, views, etc.). Use forceReload to refetch.
+      if (!forceReload) {
+        const existingSchemas = get().databaseSchemas[serverId] || [];
+        const existing = existingSchemas.find(s => s.name === databaseName);
+        const hasObjects =
+          (existing?.tables?.length ?? 0) > 0 ||
+          (existing?.procedures?.length ?? 0) > 0 ||
+          (existing?.views?.length ?? 0) > 0 ||
+          (existing?.functions?.length ?? 0) > 0 ||
+          (existing?.triggers?.length ?? 0) > 0 ||
+          (existing?.events?.length ?? 0) > 0;
+        if (existing && hasObjects) {
+          return;
+        }
       }
 
       console.log(`📥 Loading schema for database: ${databaseName}...`);
@@ -286,6 +490,7 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
         views: schemaResult.schema.views?.length || 0,
         functions: schemaResult.schema.functions?.length || 0,
         triggers: schemaResult.schema.triggers?.length || 0,
+        events: schemaResult.schema.events?.length || 0,
       });
 
       // Update the specific database schema in the store
@@ -414,6 +619,45 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
     }
   },
 
+  createDatabase: async (serverId, databaseName) => {
+    const server = get().servers.find((s) => s.id === serverId);
+    if (!server) {
+      throw new Error('Server not found');
+    }
+    await apiClient.createDatabase(
+      {
+        host: server.host,
+        port: server.port,
+        user: server.username,
+        password: server.password,
+        type: server.databaseType,
+      },
+      databaseName
+    );
+    await get().loadDatabasesForServer(serverId);
+  },
+
+  dropDatabase: async (serverId, databaseName) => {
+    const server = get().servers.find((s) => s.id === serverId);
+    if (!server) {
+      throw new Error('Server not found');
+    }
+    await apiClient.dropDatabase(
+      {
+        host: server.host,
+        port: server.port,
+        user: server.username,
+        password: server.password,
+        type: server.databaseType,
+      },
+      databaseName
+    );
+    if (get().selectedServerId === serverId && get().selectedDatabaseName === databaseName) {
+      set({ selectedDatabaseName: null });
+    }
+    await get().loadDatabasesForServer(serverId);
+  },
+
   // Backup Actions
   startBackup: (configId) => {
     const execution: BackupExecutionState = {
@@ -500,9 +744,9 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
       const targetServer = get().getServerById(targetServerId);
 
       if (!sourceServer || !targetServer) {
-        console.error('Source or target server not found');
+        const err = new Error('Source or target server not found');
         set({ isComparing: false });
-        return;
+        throw err;
       }
 
       console.log('🔍 Starting schema comparison...');
@@ -539,11 +783,9 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
       const targetSchema = allTargetSchemas?.find(s => s.name === targetDatabase);
 
       if (!sourceSchema || !targetSchema) {
-        console.error('❌ Failed to load schemas');
-        console.error('Source schema found:', !!sourceSchema, 'for database:', sourceDatabase);
-        console.error('Target schema found:', !!targetSchema, 'for database:', targetDatabase);
+        const err = new Error('Failed to load schemas. Ensure both databases exist and are accessible.');
         set({ isComparing: false });
-        return;
+        throw err;
       }
 
       console.log('📊 Source schema for', sourceDatabase, ':', {
@@ -567,7 +809,126 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
       });
 
       // Perform comparison
-      const result = get().performComparison(sourceServer, targetServer, sourceSchema, targetSchema, comparisonType);
+      let result = get().performComparison(sourceServer, targetServer, sourceSchema, targetSchema, comparisonType);
+
+      // Data comparison for tables when mode is 'data' or 'both'
+      let config: { tables?: boolean; comparisonMode?: string } | null = null;
+      if (typeof comparisonType === 'string' && comparisonType.startsWith('{')) {
+        try {
+          config = JSON.parse(comparisonType);
+        } catch {
+          config = null;
+        }
+      }
+      const runData = config?.comparisonMode === 'data' || config?.comparisonMode === 'both';
+      if (runData && sourceSchema.tables && targetSchema.tables) {
+        const targetTableNames = new Set(targetSchema.tables.map((t) => t.name));
+        const commonTables = config?.tables
+          ? sourceSchema.tables.filter((t) => targetTableNames.has(t.name))
+          : [];
+        let dataScript = '\n-- ========================================\n-- TABLE / VIEW DATA SYNC\n-- ========================================\n\n';
+        let dataDiffCount = 0;
+        for (const table of commonTables) {
+          const targetTable = targetSchema.tables.find((t) => t.name === table.name);
+          if (!targetTable?.columns?.length) continue;
+          const allColumns = table.columns?.map((c) => c.name) ?? targetTable.columns.map((c) => c.name);
+          const keyColumns = (table.columns ?? targetTable.columns).filter((c) => c.isPrimaryKey).map((c) => c.name);
+          const cols = keyColumns.length > 0 ? keyColumns : allColumns.slice(0, 1);
+          try {
+            const [srcRes, tgtRes] = await Promise.all([
+              apiClient.executeQuery({
+                host: sourceServer.host,
+                port: sourceServer.port,
+                user: sourceServer.username,
+                password: sourceServer.password,
+                type: sourceServer.databaseType,
+                database: sourceDatabase,
+                query: `SELECT * FROM \`${table.name.replace(/`/g, '``')}\` LIMIT ${DATA_ROW_LIMIT}`,
+              }),
+              apiClient.executeQuery({
+                host: targetServer.host,
+                port: targetServer.port,
+                user: targetServer.username,
+                password: targetServer.password,
+                type: targetServer.databaseType,
+                database: targetDatabase,
+                query: `SELECT * FROM \`${table.name.replace(/`/g, '``')}\` LIMIT ${DATA_ROW_LIMIT}`,
+              }),
+            ]);
+            if (!srcRes.success || !tgtRes.success || !srcRes.rows || !tgtRes.rows) continue;
+            const srcRows = srcRes.rows as Record<string, unknown>[];
+            const tgtRows = tgtRes.rows as Record<string, unknown>[];
+            const diffRows = buildDataDiff(srcRows, tgtRows, cols);
+            const hasChanges = diffRows.some((r) => r.status !== 'unchanged');
+            if (hasChanges) {
+              const tableScript = generateDataSyncScript(diffRows, table.name, allColumns, keyColumns);
+              if (tableScript) {
+                dataScript += `-- Table: ${table.name}\n${tableScript}\n\n`;
+                dataDiffCount += diffRows.filter((r) => r.status !== 'unchanged').length;
+              }
+            }
+          } catch (err) {
+            console.warn(`Data compare skipped for table ${table.name}:`, err);
+          }
+        }
+        // Data comparison for views (result sets) when views selected
+        if (config?.views && sourceSchema.views && targetSchema.views) {
+          const targetViewNames = new Set(targetSchema.views.map((v) => v.name));
+          const commonViews = sourceSchema.views.filter((v) => targetViewNames.has(v.name));
+          for (const view of commonViews) {
+            try {
+              const [srcRes, tgtRes] = await Promise.all([
+                apiClient.executeQuery({
+                  host: sourceServer.host,
+                  port: sourceServer.port,
+                  user: sourceServer.username,
+                  password: sourceServer.password,
+                  type: sourceServer.databaseType,
+                  database: sourceDatabase,
+                  query: `SELECT * FROM \`${view.name.replace(/`/g, '``')}\` LIMIT ${DATA_ROW_LIMIT}`,
+                }),
+                apiClient.executeQuery({
+                  host: targetServer.host,
+                  port: targetServer.port,
+                  user: targetServer.username,
+                  password: targetServer.password,
+                  type: targetServer.databaseType,
+                  database: targetDatabase,
+                  query: `SELECT * FROM \`${view.name.replace(/`/g, '``')}\` LIMIT ${DATA_ROW_LIMIT}`,
+                }),
+              ]);
+              if (!srcRes.success || !tgtRes.success || !srcRes.rows || !tgtRes.rows) continue;
+              const srcCols = srcRes.columns ?? Object.keys((srcRes.rows[0] as object) || {});
+              const tgtCols = tgtRes.columns ?? Object.keys((tgtRes.rows[0] as object) || {});
+              const allColumns = srcCols.length >= tgtCols.length ? srcCols : tgtCols;
+              const keyColumns = allColumns.slice(0, 1);
+              const srcRows = srcRes.rows as Record<string, unknown>[];
+              const tgtRows = tgtRes.rows as Record<string, unknown>[];
+              const diffRows = buildDataDiff(srcRows, tgtRows, keyColumns);
+              const hasChanges = diffRows.some((r) => r.status !== 'unchanged');
+              if (hasChanges) {
+                const viewScript = generateDataSyncScript(diffRows, view.name, allColumns, keyColumns);
+                if (viewScript) {
+                  dataScript += `-- View result: ${view.name}\n${viewScript}\n\n`;
+                  dataDiffCount += diffRows.filter((r) => r.status !== 'unchanged').length;
+                }
+              }
+            } catch (err) {
+              console.warn(`Data compare skipped for view ${view.name}:`, err);
+            }
+          }
+        }
+        if (dataDiffCount > 0) {
+          result = {
+            ...result,
+            deploymentScript: result.deploymentScript + dataScript,
+            summary: {
+              ...result.summary,
+              totalDifferences: result.summary.totalDifferences + dataDiffCount,
+            },
+          };
+        }
+      }
 
       console.log('✅ Comparison complete:', {
         totalDifferences: result.summary.totalDifferences,
@@ -581,6 +942,7 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
     } catch (error) {
       console.error('Schema comparison failed:', error);
       set({ isComparing: false });
+      throw error;
     }
   },
 
@@ -818,16 +1180,31 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
       return script + '\n';
     };
 
+    // Normalize values for comparison (avoids false "modified" after restore)
+    const normalizeNullable = (v: any) => v === true || v === 'YES' || v === 1 || v === '1';
+    const normalizeDefault = (v: any) => {
+      if (v == null || v === '') return null;
+      if (typeof v === 'string' && v.toUpperCase() === 'NULL') return null;
+      const s = typeof v === 'string' ? v.trim() : String(v);
+      // Treat CURRENT_TIMESTAMP and CURRENT_TIMESTAMP() as same
+      if (/^CURRENT_TIMESTAMP\s*\(\s*\)\s*$/i.test(s)) return 'CURRENT_TIMESTAMP()';
+      if (/^CURRENT_TIMESTAMP\s*$/i.test(s)) return 'CURRENT_TIMESTAMP';
+      return s;
+    };
+    const normalizeDataType = (v: any) => (v == null ? '' : String(v).trim());
+
     // Helper: Compare table columns
     const compareTableColumns = (sourceTable: any, targetTable: any) => {
       if (!sourceTable.columns || !targetTable.columns) return [];
 
+      const sourceCols = sourceTable.columns as any[];
+      const targetCols = targetTable.columns as any[];
+      const sourceColMap = new Map(sourceCols.map((c: any) => [c.name, c]));
+      const targetColMap = new Map(targetCols.map((c: any) => [c.name, c]));
       const columnDiffs: any[] = [];
-      const sourceColMap = new Map(sourceTable.columns.map((c: any) => [c.name, c]));
-      const targetColMap = new Map(targetTable.columns.map((c: any) => [c.name, c]));
 
       // Check columns in source
-      sourceTable.columns.forEach((sourceCol: any) => {
+      sourceCols.forEach((sourceCol: any) => {
         const targetCol = targetColMap.get(sourceCol.name);
         if (!targetCol) {
           columnDiffs.push({
@@ -838,8 +1215,10 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
             changeType: 'added',
           });
         } else {
-          // Compare column properties
-          if (sourceCol.dataType !== targetCol.dataType) {
+          // Compare column properties (normalized to avoid false diffs after restore)
+          const srcType = normalizeDataType(sourceCol.dataType);
+          const tgtType = normalizeDataType(targetCol.dataType);
+          if (srcType !== tgtType) {
             columnDiffs.push({
               columnName: sourceCol.name,
               field: 'dataType',
@@ -848,7 +1227,7 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
               changeType: 'modified',
             });
           }
-          if (sourceCol.nullable !== targetCol.nullable) {
+          if (normalizeNullable(sourceCol.nullable) !== normalizeNullable(targetCol.nullable)) {
             columnDiffs.push({
               columnName: sourceCol.name,
               field: 'nullable',
@@ -857,7 +1236,7 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
               changeType: 'modified',
             });
           }
-          if (sourceCol.defaultValue !== targetCol.defaultValue) {
+          if (normalizeDefault(sourceCol.defaultValue) !== normalizeDefault(targetCol.defaultValue)) {
             columnDiffs.push({
               columnName: sourceCol.name,
               field: 'defaultValue',
@@ -870,7 +1249,7 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
       });
 
       // Check columns in target that are not in source
-      targetTable.columns.forEach((targetCol: any) => {
+      targetCols.forEach((targetCol: any) => {
         if (!sourceColMap.has(targetCol.name)) {
           columnDiffs.push({
             columnName: targetCol.name,
@@ -885,21 +1264,26 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
       return columnDiffs;
     };
 
+    // Normalize object name for comparison (case-insensitive; MySQL/restore can differ in casing)
+    const normalizeObjName = (n: string) => (n ?? '').toLowerCase();
+
     const compareObjects = (sourceObjs: any[], targetObjs: any[], type: any) => {
-      const sourcenames = new Set(sourceObjs.map(o => o.name));
-      const targetNames = new Set(targetObjs.map(o => o.name));
+      const sourceList = sourceObjs ?? [];
+      const targetList = targetObjs ?? [];
+      const sourcenames = new Set(sourceList.map(o => normalizeObjName(o.name)));
+      const targetNames = new Set(targetList.map(o => normalizeObjName(o.name)));
       const differences: any[] = [];
 
       console.log(`Comparing ${type}s:`, {
-        sourceCount: sourceObjs.length,
-        targetCount: targetObjs.length,
-        sourceNames: Array.from(sourcenames).slice(0, 5),
-        targetNames: Array.from(targetNames).slice(0, 5),
+        sourceCount: sourceList.length,
+        targetCount: targetList.length,
+        sourceNames: sourceList.slice(0, 5).map(o => o.name),
+        targetNames: targetList.slice(0, 5).map(o => o.name),
       });
 
-      // Missing in target
-      sourceObjs.forEach(obj => {
-        if (!targetNames.has(obj.name)) {
+      // Missing in target (case-insensitive match so restored DB isn't reported missing)
+      sourceList.forEach(obj => {
+        if (!targetNames.has(normalizeObjName(obj.name))) {
           console.log(`${type} "${obj.name}" is MISSING in target`);
           const diff = {
             name: obj.name,
@@ -916,8 +1300,8 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
       });
 
       // Extra in target
-      targetObjs.forEach(obj => {
-        if (!sourcenames.has(obj.name)) {
+      targetList.forEach(obj => {
+        if (!sourcenames.has(normalizeObjName(obj.name))) {
           console.log(`${type} "${obj.name}" is EXTRA in target`);
           const diff = {
             name: obj.name,
@@ -933,9 +1317,9 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
         }
       });
 
-      // Common objects (compare for modifications)
-      sourceObjs.forEach(sourceObj => {
-        const targetObj = targetObjs.find(o => o.name === sourceObj.name);
+      // Common objects (compare for modifications; match by normalized name)
+      sourceList.forEach(sourceObj => {
+        const targetObj = targetList.find(o => normalizeObjName(o.name) === normalizeObjName(sourceObj.name));
         if (targetObj) {
           let columnDifferences: any[] = [];
           let differenceType: any = 'identical';
@@ -962,9 +1346,16 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
               targetDefPreview: targetDef.substring(0, 100),
             });
 
-            // Normalize definitions for comparison (remove whitespace differences)
-            const normalizedSource = sourceDef.replace(/\s+/g, ' ').trim();
-            const normalizedTarget = targetDef.replace(/\s+/g, ' ').trim();
+            // Normalize definitions for comparison: strip DEFINER (changes after restore), whitespace
+            const normalizeDef = (def: string) => {
+              let s = def
+                .replace(/\s*DEFINER\s*=\s*`[^`]*`@`[^`]*`/gi, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+              return s;
+            };
+            const normalizedSource = normalizeDef(sourceDef);
+            const normalizedTarget = normalizeDef(targetDef);
 
             if (normalizedSource !== normalizedTarget) {
               differenceType = 'modified';
@@ -1003,53 +1394,91 @@ export const useBackupStore = create<BackupStore>((set, get) => ({
     let triggerDiffs: any[] = [];
     let eventDiffs: any[] = [];
 
-    // Filter comparisons based on comparisonType
-    switch (comparisonType) {
-      case 'structure':
-        // Compare ALL structure (tables, procedures, views, functions, triggers, events) - NO data
-        tableDiffs = compareObjects(sourceSchema.tables, targetSchema.tables, 'table');
-        procedureDiffs = compareObjects(sourceSchema.procedures, targetSchema.procedures, 'procedure');
-        viewDiffs = compareObjects(sourceSchema.views, targetSchema.views, 'view');
-        functionDiffs = compareObjects(sourceSchema.functions, targetSchema.functions, 'function');
-        triggerDiffs = compareObjects(sourceSchema.triggers, targetSchema.triggers, 'trigger');
-        eventDiffs = compareObjects(sourceSchema.events, targetSchema.events, 'event');
-        break;
-      case 'data':
-        // Only compare data (INSERT statements) - NO structure changes
-        // TODO: Implement data comparison - generate INSERT/UPDATE/DELETE statements
-        console.log('Data comparison - will generate INSERT statements for data differences');
-        break;
-      case 'tables':
-        // Compare tables only
-        tableDiffs = compareObjects(sourceSchema.tables, targetSchema.tables, 'table');
-        break;
-      case 'procedures':
-        // Compare stored procedures only
-        procedureDiffs = compareObjects(sourceSchema.procedures, targetSchema.procedures, 'procedure');
-        break;
-      case 'views':
-        // Compare views only
-        viewDiffs = compareObjects(sourceSchema.views, targetSchema.views, 'view');
-        break;
-      case 'functions':
-        // Compare functions only
-        functionDiffs = compareObjects(sourceSchema.functions, targetSchema.functions, 'function');
-        break;
-      case 'triggers':
-        // Compare triggers only
-        triggerDiffs = compareObjects(sourceSchema.triggers, targetSchema.triggers, 'trigger');
-        break;
-      case 'all':
-      default:
-        // Compare everything (structure + data)
-        tableDiffs = compareObjects(sourceSchema.tables, targetSchema.tables, 'table');
-        procedureDiffs = compareObjects(sourceSchema.procedures, targetSchema.procedures, 'procedure');
-        viewDiffs = compareObjects(sourceSchema.views, targetSchema.views, 'view');
-        functionDiffs = compareObjects(sourceSchema.functions, targetSchema.functions, 'function');
-        triggerDiffs = compareObjects(sourceSchema.triggers, targetSchema.triggers, 'trigger');
-        eventDiffs = compareObjects(sourceSchema.events, targetSchema.events, 'event');
-        // TODO: Add data comparison
-        break;
+    // Guard schema arrays (avoid crashes and false diffs when undefined)
+    const sourceTables = sourceSchema.tables ?? [];
+    const sourceProcedures = sourceSchema.procedures ?? [];
+    const sourceViews = sourceSchema.views ?? [];
+    const sourceFunctions = sourceSchema.functions ?? [];
+    const sourceTriggers = sourceSchema.triggers ?? [];
+    const sourceEvents = sourceSchema.events ?? [];
+    const targetTables = targetSchema.tables ?? [];
+    const targetProcedures = targetSchema.procedures ?? [];
+    const targetViews = targetSchema.views ?? [];
+    const targetFunctions = targetSchema.functions ?? [];
+    const targetTriggers = targetSchema.triggers ?? [];
+    const targetEvents = targetSchema.events ?? [];
+
+    // Filter comparisons based on comparisonType (legacy string or JSON config)
+    let config: {
+      tables?: boolean;
+      procedures?: boolean;
+      views?: boolean;
+      functions?: boolean;
+      triggers?: boolean;
+      events?: boolean;
+      structureOnly?: boolean;
+      comparisonMode?: 'structure' | 'data' | 'both';
+    } | null = null;
+    if (typeof comparisonType === 'string' && comparisonType.startsWith('{')) {
+      try {
+        config = JSON.parse(comparisonType);
+      } catch {
+        config = null;
+      }
+    }
+
+    const mode = config?.comparisonMode ?? (config?.structureOnly === false ? 'both' : 'structure');
+    const runStructure = mode === 'structure' || mode === 'both';
+    const runData = mode === 'data' || mode === 'both';
+
+    if (config && typeof config === 'object') {
+      // New config format: object type checkboxes + comparisonMode
+      // Tables: structure when runStructure, data when runData (data done in compareSchemas)
+      if (config.tables && runStructure) tableDiffs = compareObjects(sourceTables, targetTables, 'table');
+      if (config.procedures) procedureDiffs = compareObjects(sourceProcedures, targetProcedures, 'procedure');
+      if (config.views) viewDiffs = compareObjects(sourceViews, targetViews, 'view');
+      if (config.functions) functionDiffs = compareObjects(sourceFunctions, targetFunctions, 'function');
+      if (config.triggers) triggerDiffs = compareObjects(sourceTriggers, targetTriggers, 'trigger');
+      if (config.events) eventDiffs = compareObjects(sourceEvents, targetEvents, 'event');
+    } else {
+      // Legacy string format
+      switch (comparisonType) {
+        case 'structure':
+          tableDiffs = compareObjects(sourceTables, targetTables, 'table');
+          procedureDiffs = compareObjects(sourceProcedures, targetProcedures, 'procedure');
+          viewDiffs = compareObjects(sourceViews, targetViews, 'view');
+          functionDiffs = compareObjects(sourceFunctions, targetFunctions, 'function');
+          triggerDiffs = compareObjects(sourceTriggers, targetTriggers, 'trigger');
+          eventDiffs = compareObjects(sourceEvents, targetEvents, 'event');
+          break;
+        case 'data':
+          console.log('Data comparison - will generate INSERT statements for data differences');
+          break;
+        case 'tables':
+          tableDiffs = compareObjects(sourceTables, targetTables, 'table');
+          break;
+        case 'procedures':
+          procedureDiffs = compareObjects(sourceProcedures, targetProcedures, 'procedure');
+          break;
+        case 'views':
+          viewDiffs = compareObjects(sourceViews, targetViews, 'view');
+          break;
+        case 'functions':
+          functionDiffs = compareObjects(sourceFunctions, targetFunctions, 'function');
+          break;
+        case 'triggers':
+          triggerDiffs = compareObjects(sourceTriggers, targetTriggers, 'trigger');
+          break;
+        case 'all':
+        default:
+          tableDiffs = compareObjects(sourceTables, targetTables, 'table');
+          procedureDiffs = compareObjects(sourceProcedures, targetProcedures, 'procedure');
+          viewDiffs = compareObjects(sourceViews, targetViews, 'view');
+          functionDiffs = compareObjects(sourceFunctions, targetFunctions, 'function');
+          triggerDiffs = compareObjects(sourceTriggers, targetTriggers, 'trigger');
+          eventDiffs = compareObjects(sourceEvents, targetEvents, 'event');
+          break;
+      }
     }
 
     const allDiffs = [...tableDiffs, ...procedureDiffs, ...viewDiffs, ...functionDiffs, ...triggerDiffs, ...eventDiffs];
