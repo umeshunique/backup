@@ -49,6 +49,7 @@ import {
 } from '@/components/ui/dialog';
 import { useAddServer } from '@/contexts/AddServerContext';
 import { apiClient } from '@/services/apiClient';
+import { escapeIdentifier } from '@/utils/sqlIdentifier';
 const PANEL_MIN_WIDTH = 200;
 const PANEL_MAX_WIDTH = 560;
 const PANEL_DEFAULT_WIDTH = 320;
@@ -235,25 +236,35 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
   ) => {
     selectServer(serverId);
     selectDatabase(dbName);
-    const escapedDb = '`' + dbName.replace(/`/g, '``') + '`';
-    const escapedName = '`' + objectName.replace(/`/g, '``') + '`';
+    const server = getServerById(serverId);
+    const dbType = server?.databaseType ?? 'mysql';
+    const escapedDb = escapeIdentifier(dbName, dbType);
+    const escapedName = escapeIdentifier(objectName, dbType);
     let sql = '';
     switch (kind) {
       case 'table':
       case 'view':
-        sql = `SELECT * FROM ${escapedDb}.${escapedName} LIMIT 100;\n`;
+        sql = dbType === 'mssql'
+          ? `SELECT TOP 100 * FROM ${escapedDb}.${escapedName};\n`
+          : `SELECT * FROM ${escapedDb}.${escapedName} LIMIT 100;\n`;
         break;
       case 'procedure':
-        sql = `CALL ${escapedDb}.${escapedName}();\n`;
+        sql = `EXEC ${escapedDb}.${escapedName};\n`;
         break;
       case 'function':
-        sql = `SELECT ${escapedDb}.${escapedName}();\n`;
+        sql = dbType === 'mysql'
+          ? `SELECT ${escapedDb}.${escapedName}();\n`
+          : `SELECT ${escapedDb}.${escapedName}();\n`;
         break;
       case 'trigger':
-        sql = `SHOW CREATE TRIGGER ${escapedDb}.${escapedName};\n`;
+        sql = dbType === 'mysql'
+          ? `SHOW CREATE TRIGGER ${escapedDb}.${escapedName};\n`
+          : `-- Triggers: use Object Explorer or sys.triggers in MSSQL\n`;
         break;
       case 'event':
-        sql = `SHOW CREATE EVENT ${escapedDb}.${escapedName};\n`;
+        sql = dbType === 'mysql'
+          ? `SHOW CREATE EVENT ${escapedDb}.${escapedName};\n`
+          : `-- Events: SQL Server uses SQL Agent jobs\n`;
         break;
     }
     setSqlEditorInitialSql(sql);
@@ -269,28 +280,45 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
   ) => {
     selectServer(serverId);
     selectDatabase(dbName);
-    const escapedDb = '`' + dbName.replace(/`/g, '``') + '`';
-    const escapedName = '`' + objectName.replace(/`/g, '``') + '`';
+    const server = getServerById(serverId);
+    const dbType = server?.databaseType ?? 'mysql';
+    const escapedDb = escapeIdentifier(dbName, dbType);
+    const escapedName = escapeIdentifier(objectName, dbType);
     let sql = '';
-    switch (kind) {
-      case 'table':
-        sql = `SHOW CREATE TABLE ${escapedDb}.${escapedName};\n`;
-        break;
-      case 'view':
-        sql = `SHOW CREATE VIEW ${escapedDb}.${escapedName};\n`;
-        break;
-      case 'procedure':
-        sql = `SHOW CREATE PROCEDURE ${escapedDb}.${escapedName};\n`;
-        break;
-      case 'function':
-        sql = `SHOW CREATE FUNCTION ${escapedDb}.${escapedName};\n`;
-        break;
-      case 'trigger':
-        sql = `SHOW CREATE TRIGGER ${escapedDb}.${escapedName};\n`;
-        break;
-      case 'event':
-        sql = `SHOW CREATE EVENT ${escapedDb}.${escapedName};\n`;
-        break;
+    if (dbType === 'mssql') {
+      switch (kind) {
+        case 'table':
+          sql = `-- Table DDL: use SSMS or SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '${objectName.replace(/'/g, "''")}';\n`;
+          break;
+        case 'view':
+        case 'procedure':
+        case 'function':
+          sql = `SELECT OBJECT_DEFINITION(OBJECT_ID('${dbName}.dbo.${objectName.replace(/'/g, "''")}'));\n`;
+          break;
+        default:
+          sql = `-- ${kind} structure: use Object Explorer in MSSQL\n`;
+      }
+    } else {
+      switch (kind) {
+        case 'table':
+          sql = `SHOW CREATE TABLE ${escapedDb}.${escapedName};\n`;
+          break;
+        case 'view':
+          sql = `SHOW CREATE VIEW ${escapedDb}.${escapedName};\n`;
+          break;
+        case 'procedure':
+          sql = `SHOW CREATE PROCEDURE ${escapedDb}.${escapedName};\n`;
+          break;
+        case 'function':
+          sql = `SHOW CREATE FUNCTION ${escapedDb}.${escapedName};\n`;
+          break;
+        case 'trigger':
+          sql = `SHOW CREATE TRIGGER ${escapedDb}.${escapedName};\n`;
+          break;
+        case 'event':
+          sql = `SHOW CREATE EVENT ${escapedDb}.${escapedName};\n`;
+          break;
+      }
     }
     setSqlEditorInitialSql(sql);
     setActiveTab('sql-editor');
@@ -352,8 +380,13 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
   const openTableCreate = (serverId: string, dbName: string) => {
     selectServer(serverId);
     selectDatabase(dbName);
-    const escapedDb = '`' + dbName.replace(/`/g, '``') + '`';
-    const sql = `CREATE TABLE ${escapedDb}.\`new_table\` (\n  id INT PRIMARY KEY AUTO_INCREMENT\n);\n`;
+    const server = getServerById(serverId);
+    const dbType = server?.databaseType ?? 'mysql';
+    const escapedDb = escapeIdentifier(dbName, dbType);
+    const escapedTable = escapeIdentifier('new_table', dbType);
+    const sql = dbType === 'mssql'
+      ? `CREATE TABLE ${escapedDb}.dbo.${escapedTable} (\n  id INT IDENTITY(1,1) PRIMARY KEY\n);\n`
+      : `CREATE TABLE ${escapedDb}.${escapedTable} (\n  id INT PRIMARY KEY AUTO_INCREMENT\n);\n`;
     setSqlEditorInitialSql(sql);
     setActiveTab('sql-editor');
   };
@@ -362,9 +395,13 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
   const openTableUpdate = (serverId: string, dbName: string, tableName: string) => {
     selectServer(serverId);
     selectDatabase(dbName);
-    const escapedDb = '`' + dbName.replace(/`/g, '``') + '`';
-    const escapedName = '`' + tableName.replace(/`/g, '``') + '`';
-    const sql = `-- Table structure: run to get the full CREATE TABLE definition\nSHOW CREATE TABLE ${escapedDb}.${escapedName};\n`;
+    const server = getServerById(serverId);
+    const dbType = server?.databaseType ?? 'mysql';
+    const escapedDb = escapeIdentifier(dbName, dbType);
+    const escapedName = escapeIdentifier(tableName, dbType);
+    const sql = dbType === 'mssql'
+      ? `-- Table structure: use INFORMATION_SCHEMA or SSMS script\nSELECT * FROM ${escapedDb}.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '${tableName.replace(/'/g, "''")}';\n`
+      : `-- Table structure: run to get the full CREATE TABLE definition\nSHOW CREATE TABLE ${escapedDb}.${escapedName};\n`;
     setSqlEditorInitialSql(sql);
     setActiveTab('sql-editor');
   };
@@ -386,16 +423,29 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
   ) => {
     const server = getServerById(serverId);
     if (!server) return;
-    const escapedDb = '`' + dbName.replace(/`/g, '``') + '`';
-    const escapedName = '`' + objectName.replace(/`/g, '``') + '`';
+    const dbType = server.databaseType;
+    const escapedDb = escapeIdentifier(dbName, dbType);
+    const escapedName = escapeIdentifier(objectName, dbType);
     let query = '';
-    switch (kind) {
-      case 'table': query = `SHOW CREATE TABLE ${escapedDb}.${escapedName}`; break;
-      case 'view': query = `SHOW CREATE VIEW ${escapedDb}.${escapedName}`; break;
-      case 'procedure': query = `SHOW CREATE PROCEDURE ${escapedDb}.${escapedName}`; break;
-      case 'function': query = `SHOW CREATE FUNCTION ${escapedDb}.${escapedName}`; break;
-      case 'trigger': query = `SHOW CREATE TRIGGER ${escapedDb}.${escapedName}`; break;
-      case 'event': query = `SHOW CREATE EVENT ${escapedDb}.${escapedName}`; break;
+    if (dbType === 'mssql') {
+      switch (kind) {
+        case 'view':
+        case 'procedure':
+        case 'function':
+          query = `SELECT OBJECT_DEFINITION(OBJECT_ID('${dbName}.dbo.${objectName.replace(/'/g, "''")}'))`;
+          break;
+        default:
+          query = `SELECT 'MSSQL: use Object Explorer to script ${kind}' AS info`;
+      }
+    } else {
+      switch (kind) {
+        case 'table': query = `SHOW CREATE TABLE ${escapedDb}.${escapedName}`; break;
+        case 'view': query = `SHOW CREATE VIEW ${escapedDb}.${escapedName}`; break;
+        case 'procedure': query = `SHOW CREATE PROCEDURE ${escapedDb}.${escapedName}`; break;
+        case 'function': query = `SHOW CREATE FUNCTION ${escapedDb}.${escapedName}`; break;
+        case 'trigger': query = `SHOW CREATE TRIGGER ${escapedDb}.${escapedName}`; break;
+        case 'event': query = `SHOW CREATE EVENT ${escapedDb}.${escapedName}`; break;
+      }
     }
     setDdlDialogTitle(`${kind}: ${objectName}`);
     setDdlDialogContent('');
@@ -418,7 +468,11 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
       const row = result.rows[0];
       const colName = DDL_COLUMN_NAMES[kind];
       let ddl = '';
-      if (Array.isArray(row) && result.columns?.length) {
+      if (dbType === 'mssql' && result.columns?.length) {
+        const firstCol = result.columns[0];
+        const val = Array.isArray(row) ? row[0] : (row as Record<string, unknown>)[firstCol];
+        ddl = val != null ? String(val) : (result.columns.length > 1 ? String((row as Record<string, unknown>)[result.columns[1]]) : '—');
+      } else if (Array.isArray(row) && result.columns?.length) {
         const idx = result.columns.findIndex((c: string) => c === colName);
         ddl = idx >= 0 ? String(row[idx] ?? '') : String(row[row.length - 1] ?? '');
       } else if (row && typeof row === 'object' && colName in row) {
@@ -434,6 +488,11 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
     }
   };
 
+  /** Defer action so dropdown can close first and navigation/state updates run after. */
+  const deferAction = useCallback((fn: () => void) => {
+    setTimeout(fn, 0);
+  }, []);
+
   /** Open Data Editor with this table and show its data directly. */
   const openTableViewData = (serverId: string, dbName: string, tableName: string) => {
     selectServer(serverId);
@@ -447,9 +506,13 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
   const openTableDelete = (serverId: string, dbName: string, tableName: string) => {
     selectServer(serverId);
     selectDatabase(dbName);
-    const escapedDb = '`' + dbName.replace(/`/g, '``') + '`';
-    const escapedName = '`' + tableName.replace(/`/g, '``') + '`';
-    const sql = `-- WARNING: This will permanently delete the table and its data.\nDROP TABLE ${escapedDb}.${escapedName};\n`;
+    const server = getServerById(serverId);
+    const dbType = server?.databaseType ?? 'mysql';
+    const escapedDb = escapeIdentifier(dbName, dbType);
+    const escapedName = escapeIdentifier(tableName, dbType);
+    const sql = dbType === 'mssql'
+      ? `-- WARNING: This will permanently delete the table and its data.\nDROP TABLE ${escapedDb}.dbo.${escapedName};\n`
+      : `-- WARNING: This will permanently delete the table and its data.\nDROP TABLE ${escapedDb}.${escapedName};\n`;
     setSqlEditorInitialSql(sql);
     setActiveTab('sql-editor');
   };
@@ -458,7 +521,12 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
   const openSchemaCreate = (serverId: string) => {
     selectServer(serverId);
     selectDatabase(null);
-    const sql = `-- Create a new database (schema)\nCREATE DATABASE \`new_database\`;\nUSE \`new_database\`;\n`;
+    const server = getServerById(serverId);
+    const dbType = server?.databaseType ?? 'mysql';
+    const escapedName = escapeIdentifier('new_database', dbType);
+    const sql = dbType === 'mssql'
+      ? `-- Create a new database\nCREATE DATABASE ${escapedName};\n`
+      : `-- Create a new database (schema)\nCREATE DATABASE ${escapedName};\nUSE ${escapedName};\n`;
     setSqlEditorInitialSql(sql);
     setActiveTab('sql-editor');
   };
@@ -480,7 +548,9 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
   const openSchemaDelete = (serverId: string, dbName: string) => {
     selectServer(serverId);
     selectDatabase(dbName);
-    const escapedDb = '`' + dbName.replace(/`/g, '``') + '`';
+    const server = getServerById(serverId);
+    const dbType = server?.databaseType ?? 'mysql';
+    const escapedDb = escapeIdentifier(dbName, dbType);
     const sql = `-- WARNING: This will permanently delete the database and all its objects.\nDROP DATABASE ${escapedDb};\n`;
     setSqlEditorInitialSql(sql);
     setActiveTab('sql-editor');
@@ -494,42 +564,55 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
   ) => {
     selectServer(serverId);
     selectDatabase(dbName);
-    const escapedDb = '`' + dbName.replace(/`/g, '``') + '`';
+    const server = getServerById(serverId);
+    const dbType = server?.databaseType ?? 'mysql';
+    const escapedDb = escapeIdentifier(dbName, dbType);
     const lines: string[] = [`-- Schema DDL: ${dbName}`, `USE ${escapedDb};`, ''];
-    if (schema?.tables?.length) {
-      lines.push('-- Tables');
-      schema.tables.forEach((t) => {
-        const n = '`' + t.name.replace(/`/g, '``') + '`';
-        lines.push(`SHOW CREATE TABLE ${escapedDb}.${n};`, '');
-      });
-    }
-    if (schema?.procedures?.length) {
-      lines.push('-- Procedures');
-      schema.procedures.forEach((p) => {
-        const n = '`' + p.name.replace(/`/g, '``') + '`';
-        lines.push(`SHOW CREATE PROCEDURE ${escapedDb}.${n};`, '');
-      });
-    }
-    if (schema?.views?.length) {
-      lines.push('-- Views');
-      schema.views.forEach((v) => {
-        const n = '`' + v.name.replace(/`/g, '``') + '`';
-        lines.push(`SHOW CREATE VIEW ${escapedDb}.${n};`, '');
-      });
-    }
-    if (schema?.functions?.length) {
-      lines.push('-- Functions');
-      schema.functions.forEach((f) => {
-        const n = '`' + f.name.replace(/`/g, '``') + '`';
-        lines.push(`SHOW CREATE FUNCTION ${escapedDb}.${n};`, '');
-      });
-    }
-    if (schema?.triggers?.length) {
-      lines.push('-- Triggers');
-      schema.triggers.forEach((t) => {
-        const n = '`' + t.name.replace(/`/g, '``') + '`';
-        lines.push(`SHOW CREATE TRIGGER ${escapedDb}.${n};`, '');
-      });
+    const esc = (name: string) => escapeIdentifier(name, dbType);
+    if (dbType === 'mssql') {
+      if (schema?.tables?.length) {
+        lines.push('-- Tables (column list)');
+        schema.tables.forEach((t) => {
+          lines.push(`SELECT * FROM ${escapedDb}.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '${t.name.replace(/'/g, "''")}';`, '');
+        });
+      }
+      if (schema?.views?.length || schema?.procedures?.length || schema?.functions?.length) {
+        lines.push('-- Views / Procedures / Functions (OBJECT_DEFINITION)');
+        [...(schema?.views ?? []), ...(schema?.procedures ?? []), ...(schema?.functions ?? [])].forEach((obj) => {
+          lines.push(`SELECT OBJECT_DEFINITION(OBJECT_ID('${dbName}.dbo.${obj.name.replace(/'/g, "''")}'));`, '');
+        });
+      }
+    } else {
+      if (schema?.tables?.length) {
+        lines.push('-- Tables');
+        schema.tables.forEach((t) => {
+          lines.push(`SHOW CREATE TABLE ${escapedDb}.${esc(t.name)};`, '');
+        });
+      }
+      if (schema?.procedures?.length) {
+        lines.push('-- Procedures');
+        schema.procedures.forEach((p) => {
+          lines.push(`SHOW CREATE PROCEDURE ${escapedDb}.${esc(p.name)};`, '');
+        });
+      }
+      if (schema?.views?.length) {
+        lines.push('-- Views');
+        schema.views.forEach((v) => {
+          lines.push(`SHOW CREATE VIEW ${escapedDb}.${esc(v.name)};`, '');
+        });
+      }
+      if (schema?.functions?.length) {
+        lines.push('-- Functions');
+        schema.functions.forEach((f) => {
+          lines.push(`SHOW CREATE FUNCTION ${escapedDb}.${esc(f.name)};`, '');
+        });
+      }
+      if (schema?.triggers?.length) {
+        lines.push('-- Triggers');
+        schema.triggers.forEach((t) => {
+          lines.push(`SHOW CREATE TRIGGER ${escapedDb}.${esc(t.name)};`, '');
+        });
+      }
     }
     if (lines.length <= 3) lines.push('-- No objects loaded. Expand this schema and use Refresh, then try again.');
     setSqlEditorInitialSql(lines.join('\n'));
@@ -835,31 +918,31 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent side="top" align="end" className="min-w-[200px]">
-                                    <DropdownMenuItem onClick={() => openTableCreate(server.id, db.name)}>
+                                    <DropdownMenuItem onSelect={() => deferAction(() => openTableCreate(server.id, db.name))}>
                                       <Plus className="h-3.5 w-3.5 mr-2" />
                                       Create table
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => openSchemaRead(server.id, db.name, fullSchema)}>
+                                    <DropdownMenuItem onSelect={() => deferAction(() => openSchemaRead(server.id, db.name, fullSchema))}>
                                       <Eye className="h-3.5 w-3.5 mr-2" />
                                       View schema DDL
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => refreshDatabaseSchema(server.id, db.name)}>
+                                    <DropdownMenuItem onSelect={() => deferAction(() => refreshDatabaseSchema(server.id, db.name))}>
                                       <RefreshCw className="h-3.5 w-3.5 mr-2" />
                                       Refresh schema
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      onClick={() => openSchemaDelete(server.id, db.name)}
+                                      onSelect={() => deferAction(() => openSchemaDelete(server.id, db.name))}
                                       className="text-red-600 focus:text-red-600"
                                     >
                                       <Trash2 className="h-3.5 w-3.5 mr-2" />
                                       Drop database
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
-                                    <DropdownMenuItem onClick={() => openBackupSchema(server.id, db.name)}>
+                                    <DropdownMenuItem onSelect={() => deferAction(() => openBackupSchema(server.id, db.name))}>
                                       <Archive className="h-3.5 w-3.5 mr-2" />
                                       Backup schema
                                     </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => openRestoreSchema(server.id, db.name)}>
+                                    <DropdownMenuItem onSelect={() => deferAction(() => openRestoreSchema(server.id, db.name))}>
                                       <RotateCcw className="h-3.5 w-3.5 mr-2" />
                                       Restore schema
                                     </DropdownMenuItem>
@@ -975,34 +1058,34 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
                                               </Button>
                                             </DropdownMenuTrigger>
                                             <DropdownMenuContent side="top" align="end" className="min-w-[200px]">
-                                              <DropdownMenuItem onClick={() => refreshDatabaseSchema(server.id, db.name)}>
+                                              <DropdownMenuItem onSelect={() => deferAction(() => refreshDatabaseSchema(server.id, db.name))}>
                                                 <RefreshCw className="h-3.5 w-3.5 mr-2" />
                                                 Refresh schema
                                               </DropdownMenuItem>
-                                              <DropdownMenuItem onClick={() => openSchemaRead(server.id, db.name, fullSchema)}>
+                                              <DropdownMenuItem onSelect={() => deferAction(() => openSchemaRead(server.id, db.name, fullSchema))}>
                                                 <Eye className="h-3.5 w-3.5 mr-2" />
                                                 View schema DDL
                                               </DropdownMenuItem>
                                               {key === 'tables' && (
                                                 <>
                                                   <DropdownMenuSeparator />
-                                                  <DropdownMenuItem onClick={() => openTableCreate(server.id, db.name)}>
+                                                  <DropdownMenuItem onSelect={() => deferAction(() => openTableCreate(server.id, db.name))}>
                                                     <Plus className="h-3.5 w-3.5 mr-2" />
                                                     Create table
                                                   </DropdownMenuItem>
                                                   <DropdownMenuItem
-                                                    onClick={() => openSchemaDelete(server.id, db.name)}
+                                                    onSelect={() => deferAction(() => openSchemaDelete(server.id, db.name))}
                                                     className="text-red-600 focus:text-red-600"
                                                   >
                                                     <Trash2 className="h-3.5 w-3.5 mr-2" />
                                                     Drop database
                                                   </DropdownMenuItem>
                                                   <DropdownMenuSeparator />
-                                                  <DropdownMenuItem onClick={() => openBackupSchema(server.id, db.name)}>
+                                                  <DropdownMenuItem onSelect={() => deferAction(() => openBackupSchema(server.id, db.name))}>
                                                     <Archive className="h-3.5 w-3.5 mr-2" />
                                                     Backup schema
                                                   </DropdownMenuItem>
-                                                  <DropdownMenuItem onClick={() => openRestoreSchema(server.id, db.name)}>
+                                                  <DropdownMenuItem onSelect={() => deferAction(() => openRestoreSchema(server.id, db.name))}>
                                                     <RotateCcw className="h-3.5 w-3.5 mr-2" />
                                                     Restore schema
                                                   </DropdownMenuItem>
@@ -1051,20 +1134,26 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
                                                       <DropdownMenuContent side="top" align="end" className="min-w-[200px]">
                                                         {kind === 'table' && (
                                                           <>
-                                                            <DropdownMenuItem onClick={() => openTableCreate(server.id, db.name)}>
+                                                            <DropdownMenuItem
+                                                              onSelect={() => deferAction(() => openTableCreate(server.id, db.name))}
+                                                            >
                                                               <Plus className="h-3.5 w-3.5 mr-2" />
                                                               Create table
                                                             </DropdownMenuItem>
-                                                            <DropdownMenuItem onClick={() => openTableViewData(server.id, db.name, label ?? '')}>
+                                                            <DropdownMenuItem
+                                                              onSelect={() => deferAction(() => openTableViewData(server.id, db.name, label ?? ''))}
+                                                            >
                                                               <Eye className="h-3.5 w-3.5 mr-2" />
                                                               View data
                                                             </DropdownMenuItem>
-                                                            <DropdownMenuItem onClick={() => fetchAndShowDdl(server.id, db.name, 'table', label ?? '')}>
+                                                            <DropdownMenuItem
+                                                              onSelect={() => deferAction(() => fetchAndShowDdl(server.id, db.name, 'table', label ?? ''))}
+                                                            >
                                                               <FileCode className="h-3.5 w-3.5 mr-2" />
                                                               View table structure
                                                             </DropdownMenuItem>
                                                             <DropdownMenuItem
-                                                              onClick={() => openTableDelete(server.id, db.name, label ?? '')}
+                                                              onSelect={() => deferAction(() => openTableDelete(server.id, db.name, label ?? ''))}
                                                               className="text-red-600 focus:text-red-600"
                                                             >
                                                               <Trash2 className="h-3.5 w-3.5 mr-2" />
@@ -1074,33 +1163,25 @@ export function DatabaseExplorer({ onAddServerClick }: DatabaseExplorerProps = {
                                                           </>
                                                         )}
                                                         <DropdownMenuItem
-                                                          onClick={() =>
-                                                            openImportForObject(server.id, db.name, kind, label)
-                                                          }
+                                                          onSelect={() => deferAction(() => openImportForObject(server.id, db.name, kind, label ?? ''))}
                                                         >
                                                           <Upload className="h-3.5 w-3.5 mr-2" />
                                                           Import data
                                                         </DropdownMenuItem>
                                                         <DropdownMenuItem
-                                                          onClick={() =>
-                                                            openExportForObject(server.id, db.name, kind, label)
-                                                          }
+                                                          onSelect={() => deferAction(() => openExportForObject(server.id, db.name, kind, label ?? ''))}
                                                         >
                                                           <Download className="h-3.5 w-3.5 mr-2" />
                                                           Export data
                                                         </DropdownMenuItem>
                                                         <DropdownMenuItem
-                                                          onClick={() =>
-                                                            openObjectDml(server.id, db.name, kind, label)
-                                                          }
+                                                          onSelect={() => deferAction(() => openObjectDml(server.id, db.name, kind, label ?? ''))}
                                                         >
                                                           <Database className="h-3.5 w-3.5 mr-2" />
                                                           Open in SQL Editor (SELECT / CALL)
                                                         </DropdownMenuItem>
                                                         <DropdownMenuItem
-                                                          onClick={() =>
-                                                            fetchAndShowDdl(server.id, db.name, kind, label)
-                                                          }
+                                                          onSelect={() => deferAction(() => fetchAndShowDdl(server.id, db.name, kind, label ?? ''))}
                                                         >
                                                           <FileCode className="h-3.5 w-3.5 mr-2" />
                                                           View structure (SHOW CREATE)

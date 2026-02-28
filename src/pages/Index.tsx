@@ -14,6 +14,7 @@ import { ServerConfigWizard } from '@/components/server';
 import { useBackupStore } from '@/store/backupStore';
 import { apiClient } from '@/services/apiClient';
 import { SCREEN_COMPONENTS, DATABASE_SCREEN_IDS } from '@/config/screenRegistry';
+import { isScreenId } from '@/config/navigationConfig';
 import { AddServerContext } from '@/contexts/AddServerContext';
 import type { ServerConfig } from '@/types/backup.types';
 import NotFound from '@/pages/NotFound';
@@ -45,10 +46,15 @@ const Index = () => {
   const isDatabaseObjectsScreen = activeTab === 'database-objects';
   const isFullHeightScreen = isDatabaseObjectsScreen || activeTab === 'sql-editor';
 
-  // On open/refresh always land on SQL Editor; keep URL in sync with activeTab
+  // On open/refresh: land on SQL Editor only when URL is / or invalid; otherwise sync activeTab from URL
   useEffect(() => {
-    navigate('/sql-editor', { replace: true });
-    setActiveTab('sql-editor');
+    const fromPath = pathname === '/' ? '' : pathname.slice(1).split('/')[0] ?? '';
+    if (fromPath && isScreenId(fromPath)) {
+      setActiveTab(fromPath);
+    } else {
+      navigate('/sql-editor', { replace: true });
+      setActiveTab('sql-editor');
+    }
   }, []);
 
   // Sync store -> URL when activeTab changes (so Back/Forward and links update the address bar)

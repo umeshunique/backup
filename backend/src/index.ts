@@ -10,6 +10,7 @@ import serverRoutes from './routes/serverRoutes.js';
 import storageRoutes from './routes/storageRoutes.js';
 import schemaVersionRoutes from './routes/schemaVersionRoutes.js';
 import slowQueryRoutes from './routes/slowQueryRoutes.js';
+import etlRoutes from './routes/etlRoutes.js';
 
 const app = express();
 
@@ -77,6 +78,7 @@ app.use('/api/backup', backupRoutes);
 app.use('/api/storage', storageRoutes);
 app.use('/api/schema-version', schemaVersionRoutes);
 app.use('/api/slow-queries', slowQueryRoutes);
+app.use('/api/etl', etlRoutes);
 
 // 404 handler
 app.use((_req, res) => {

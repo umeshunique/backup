@@ -1,4 +1,5 @@
 import mysql from 'mysql2/promise';
+import sql from 'mssql';
 
 export interface DatabaseConfig {
   id: string;
@@ -87,6 +88,10 @@ class DatabaseService {
    * Get list of databases on a server
    */
   async getDatabases(config: DatabaseConfig): Promise<string[]> {
+    const type = (config.type || 'mysql').toLowerCase();
+    if (type === 'mssql') {
+      return this.getDatabasesMssql(config);
+    }
     try {
       const connection = await mysql.createConnection({
         host: config.host,
@@ -103,6 +108,110 @@ class DatabaseService {
         .filter(db => !['information_schema', 'mysql', 'performance_schema', 'sys'].includes(db));
     } catch (error: any) {
       throw new Error(`Failed to get databases: ${error.message}`);
+    }
+  }
+
+  private async getDatabasesMssql(config: DatabaseConfig): Promise<string[]> {
+    const pool = new sql.ConnectionPool({
+      server: config.host,
+      port: config.port,
+      user: config.user,
+      password: config.password,
+      options: { encrypt: false, trustServerCertificate: true, enableArithAbort: true },
+      connectionTimeout: 15000,
+    });
+    try {
+      await pool.connect();
+      const result = await pool.request().query(
+        "SELECT name FROM sys.databases WHERE name NOT IN ('master','tempdb','msdb') ORDER BY name"
+      );
+      const rows = result.recordset || [];
+      return rows.map((r: any) => r.name);
+    } finally {
+      await pool.close();
+    }
+  }
+
+  private async getDatabaseSchemaMssql(config: DatabaseConfig, databaseName: string): Promise<any> {
+    const pool = new sql.ConnectionPool({
+      server: config.host,
+      port: config.port,
+      user: config.user,
+      password: config.password,
+      database: databaseName,
+      options: { encrypt: false, trustServerCertificate: true, enableArithAbort: true },
+      connectionTimeout: 15000,
+    });
+    try {
+      await pool.connect();
+      const tablesResult = await pool.request().query(`
+        SELECT TABLE_NAME as name
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_TYPE = 'BASE TABLE'
+        ORDER BY TABLE_NAME
+      `);
+      const tableRows = tablesResult.recordset || [];
+      const columnsResult = await pool.request().query(`
+        SELECT
+          c.TABLE_NAME as tableName,
+          c.COLUMN_NAME as name,
+          c.DATA_TYPE as dataType,
+          c.CHARACTER_MAXIMUM_LENGTH as maxLength,
+          c.NUMERIC_PRECISION as precision,
+          c.NUMERIC_SCALE as scale,
+          c.IS_NULLABLE as nullable,
+          c.COLUMN_DEFAULT as defaultValue,
+          CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END as isPrimaryKey,
+          COLUMNPROPERTY(OBJECT_ID(QUOTENAME(c.TABLE_SCHEMA) + '.' + QUOTENAME(c.TABLE_NAME)), c.COLUMN_NAME, 'IsIdentity') as isIdentity
+        FROM INFORMATION_SCHEMA.COLUMNS c
+        LEFT JOIN (
+          SELECT ku.TABLE_NAME, ku.COLUMN_NAME
+          FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+          JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
+            ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME AND tc.TABLE_NAME = ku.TABLE_NAME
+          WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+        ) pk ON c.TABLE_NAME = pk.TABLE_NAME AND c.COLUMN_NAME = pk.COLUMN_NAME
+        WHERE c.TABLE_NAME IN (SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE')
+        ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION
+      `);
+      const allColumns = (columnsResult.recordset || []) as any[];
+      const columnsByTable = new Map<string, any[]>();
+      for (const col of allColumns) {
+        const key = col.tableName;
+        if (!columnsByTable.has(key)) columnsByTable.set(key, []);
+        columnsByTable.get(key)!.push({
+          name: col.name,
+          dataType: (col.dataType || 'nvarchar').toUpperCase(),
+          nullable: col.nullable === 'YES',
+          defaultValue: col.defaultValue,
+          isPrimaryKey: !!col.isPrimaryKey,
+          isForeignKey: false,
+          isUnique: false,
+          maxLength: col.maxLength,
+          precision: col.precision,
+          scale: col.scale,
+          autoIncrement: col.isIdentity === 1,
+        });
+      }
+      const tables = tableRows.map((r: any) => ({
+        name: r.name,
+        rowCount: 0,
+        sizeInMB: 0,
+        lastModified: new Date(),
+        hasTriggers: false,
+        columns: columnsByTable.get(r.name) || [],
+      }));
+      return {
+        name: databaseName,
+        tables,
+        views: [],
+        procedures: [],
+        functions: [],
+        triggers: [],
+        events: [],
+      };
+    } finally {
+      await pool.close();
     }
   }
 
@@ -158,6 +267,10 @@ class DatabaseService {
    * Get database schema information
    */
   async getDatabaseSchema(config: DatabaseConfig, databaseName: string): Promise<any> {
+    const type = (config.type || 'mysql').toLowerCase();
+    if (type === 'mssql') {
+      return this.getDatabaseSchemaMssql(config, databaseName);
+    }
     try {
       console.log(`🔍 getDatabaseSchema called for database: ${databaseName}`);
 
@@ -1143,8 +1256,12 @@ class DatabaseService {
     message?: string;
     error?: string;
   }> {
-    let connection;
+    const type = (credentials.type || 'mysql').toLowerCase();
+    if (type === 'mssql') {
+      return this.executeQueryMssql(credentials, database, query);
+    }
 
+    let connection;
     try {
       connection = await mysql.createConnection({
         host: credentials.host,
@@ -1194,6 +1311,98 @@ class DatabaseService {
       if (connection) {
         await connection.end();
       }
+    }
+  }
+
+  /**
+   * Run multiple MySQL statements in one connection (e.g. SET FOREIGN_KEY_CHECKS=0; TRUNCATE; SET FOREIGN_KEY_CHECKS=1).
+   * Use for operations that must run in the same session.
+   */
+  async executeMySQLMultiStatement(
+    credentials: { host: string; port: number; user: string; password: string },
+    database: string,
+    sql: string
+  ): Promise<{ success: boolean; error?: string }> {
+    let connection;
+    try {
+      connection = await mysql.createConnection({
+        host: credentials.host,
+        port: credentials.port,
+        user: credentials.user,
+        password: credentials.password,
+        database,
+        multipleStatements: true,
+      });
+      await connection.query(sql);
+      return { success: true };
+    } catch (error: any) {
+      console.error('MySQL multi-statement error:', error);
+      return { success: false, error: error.message || 'Multi-statement execution failed' };
+    } finally {
+      if (connection) {
+        await connection.end();
+      }
+    }
+  }
+
+  private async executeQueryMssql(
+    credentials: { host: string; port: number; user: string; password: string },
+    database: string,
+    query: string
+  ): Promise<{
+    success: boolean;
+    columns?: string[];
+    columnTypes?: string[];
+    rows?: any[];
+    affectedRows?: number;
+    message?: string;
+    error?: string;
+  }> {
+    const pool = new sql.ConnectionPool({
+      server: credentials.host,
+      port: credentials.port,
+      user: credentials.user,
+      password: credentials.password,
+      database,
+      options: {
+        encrypt: false,
+        trustServerCertificate: true,
+        enableArithAbort: true,
+      },
+      connectionTimeout: 30000,
+      requestTimeout: 60000,
+    });
+    try {
+      await pool.connect();
+      const result = await pool.request().query(query);
+
+      const recordset = result.recordset as any[] | undefined;
+      if (recordset && recordset.length >= 0) {
+        const columns = recordset.length > 0
+          ? Object.keys(recordset[0])
+          : [];
+        const columnTypes = columns.map(() => 'unknown');
+        return {
+          success: true,
+          columns,
+          columnTypes,
+          rows: recordset,
+        };
+      }
+      const affected = (result as any).rowsAffected?.[0] ?? 0;
+      return {
+        success: true,
+        affectedRows: affected,
+        message: `Query executed successfully. ${affected} row(s) affected.`,
+      };
+    } catch (error: any) {
+      console.error('MSSQL query execution error:', error);
+      return {
+        success: false,
+        error: error.message || 'MSSQL query execution failed',
+      };
+    } finally {
+      await pool.close();
     }
   }
 

@@ -19,6 +19,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { escapeIdentifier } from '@/utils/sqlIdentifier';
+import type { DatabaseType } from '@/types/backup.types';
+
 interface ColumnInfo {
   name: string;
   dataType?: string;
@@ -33,6 +36,8 @@ interface ColumnInfo {
 interface DataEditorProps {
   table: DatabaseTable;
   row?: any | null;
+  /** Database type for correct identifier escaping (MySQL/MSSQL/PostgreSQL). */
+  databaseType?: DatabaseType;
   onSave: (sql: string) => void;
   onCancel: () => void;
 }
@@ -44,9 +49,15 @@ function isLongTextColumn(col: ColumnInfo): boolean {
   return false;
 }
 
-export function DataEditor({ table, row, onSave, onCancel }: DataEditorProps) {
+function isNumericType(dataType: string | undefined): boolean {
+  const dt = (dataType || '').toUpperCase();
+  return ['INT', 'BIGINT', 'TINYINT', 'SMALLINT', 'MEDIUMINT', 'DECIMAL', 'NUMERIC', 'FLOAT', 'DOUBLE', 'REAL', 'BIT'].includes(dt);
+}
+
+export function DataEditor({ table, row, databaseType = 'mysql', onSave, onCancel }: DataEditorProps) {
   const { toast } = useToast();
   const isEditMode = !!row;
+  const esc = (name: string) => escapeIdentifier(name, databaseType);
   const [formData, setFormData] = useState<Record<string, any>>(
     row ||
     table.columns?.reduce((acc, col) => ({ ...acc, [col.name]: '' }), {}) || {}
@@ -54,57 +65,49 @@ export function DataEditor({ table, row, onSave, onCancel }: DataEditorProps) {
 
   const handleSubmit = () => {
     if (isEditMode) {
-      // Generate UPDATE query
+      // Generate UPDATE query (identifier-safe for MySQL/MSSQL/PostgreSQL)
       const setClauses = table.columns
         ?.filter(col => !col.autoIncrement)
         .map(col => {
           const value = formData[col.name];
           if (value === null || value === '') {
-            return `\`${col.name}\` = NULL`;
+            return `${esc(col.name)} = NULL`;
           }
-          if (['INT', 'BIGINT', 'DECIMAL', 'FLOAT', 'DOUBLE'].includes(col.dataType)) {
-            return `\`${col.name}\` = ${value}`;
+          if (isNumericType(col.dataType)) {
+            return `${esc(col.name)} = ${value}`;
           }
-          return `\`${col.name}\` = '${String(value).replace(/'/g, "''")}'`;
+          return `${esc(col.name)} = '${String(value).replace(/'/g, "''")}'`;
         })
         .join(', ');
 
-      // Build WHERE clause based on primary key or all original values
       const pkColumns = table.columns?.filter(col => col.primaryKey || col.isPrimaryKey);
       const whereClause = pkColumns && pkColumns.length > 0
         ? pkColumns.map(col => {
             const value = row[col.name];
-            if (value === null) return `\`${col.name}\` IS NULL`;
-            if (['INT', 'BIGINT', 'DECIMAL', 'FLOAT', 'DOUBLE'].includes(col.dataType)) {
-              return `\`${col.name}\` = ${value}`;
-            }
-            return `\`${col.name}\` = '${String(value).replace(/'/g, "''")}'`;
+            if (value === null) return `${esc(col.name)} IS NULL`;
+            if (isNumericType(col.dataType)) return `${esc(col.name)} = ${value}`;
+            return `${esc(col.name)} = '${String(value).replace(/'/g, "''")}'`;
           }).join(' AND ')
         : table.columns?.map(col => {
             const value = row[col.name];
-            if (value === null) return `\`${col.name}\` IS NULL`;
-            if (['INT', 'BIGINT', 'DECIMAL', 'FLOAT', 'DOUBLE'].includes(col.dataType)) {
-              return `\`${col.name}\` = ${value}`;
-            }
-            return `\`${col.name}\` = '${String(value).replace(/'/g, "''")}'`;
+            if (value === null) return `${esc(col.name)} IS NULL`;
+            if (isNumericType(col.dataType)) return `${esc(col.name)} = ${value}`;
+            return `${esc(col.name)} = '${String(value).replace(/'/g, "''")}'`;
           }).join(' AND ');
 
-      const sql = `UPDATE \`${table.name}\` SET ${setClauses} WHERE ${whereClause}`;
+      const sql = `UPDATE ${esc(table.name)} SET ${setClauses} WHERE ${whereClause}`;
       onSave(sql);
     } else {
-      // Generate INSERT query
       const columns = table.columns?.filter(col => !col.autoIncrement && formData[col.name] !== '') || [];
-      const columnNames = columns.map(col => `\`${col.name}\``).join(', ');
+      const columnNames = columns.map(col => esc(col.name)).join(', ');
       const values = columns.map(col => {
         const value = formData[col.name];
         if (value === null || value === '') return 'NULL';
-        if (['INT', 'BIGINT', 'DECIMAL', 'FLOAT', 'DOUBLE'].includes(col.dataType)) {
-          return value;
-        }
+        if (isNumericType(col.dataType)) return value;
         return `'${String(value).replace(/'/g, "''")}'`;
       }).join(', ');
 
-      const sql = `INSERT INTO \`${table.name}\` (${columnNames}) VALUES (${values})`;
+      const sql = `INSERT INTO ${esc(table.name)} (${columnNames}) VALUES (${values})`;
       onSave(sql);
     }
   };

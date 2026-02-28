@@ -397,12 +397,16 @@ export function DataLineagePage() {
                   </div>
                   <div className="space-y-2">
                     <Label>Column (optional)</Label>
-                    <Select value={lineageColumn} onValueChange={setLineageColumn} disabled={!lineageTable}>
+                    <Select
+                      value={lineageColumn || '__all__'}
+                      onValueChange={(v) => setLineageColumn(v === '__all__' ? '' : v)}
+                      disabled={!lineageTable}
+                    >
                       <SelectTrigger className="w-[200px]">
                         <SelectValue placeholder="All columns" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">All columns</SelectItem>
+                        <SelectItem value="__all__">All columns</SelectItem>
                         {lineageColumns.map((c) => (
                           <SelectItem key={c.name} value={c.name}>
                             {c.name}

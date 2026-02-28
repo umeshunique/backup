@@ -45,6 +45,7 @@ export type ScreenId =
   | 'data-compare'
   | 'sync-wizard'
   | 'migration-wizard'
+  | 'etl-wizard'
   | 'drift-detection'
   // Backup & Recovery
   | 'backup-schedule-manager'
@@ -156,7 +157,7 @@ const SETTINGS_SCREEN_IDS: ScreenId[] = ['settings'];
 export const DATABASE_SCREEN_IDS: readonly ScreenId[] = [
   'sql-editor', 'data-editor', 'database-objects', 'er-diagram', 'query-builder',
   'procedure-debugger', 'execution-plan-viewer', 'profiler', 'slow-query-analyzer',
-  'schema-version-control', 'data-compare', 'data-generator', 'data-quality-rules',
+  'schema-version-control', 'data-compare', 'data-generator', 'data-quality-rules', 'etl-wizard',
 ];
 
 /** Module screen IDs - all tabIds from modulesConfig (for sidebar/modules hub) */
@@ -199,6 +200,7 @@ export const ALL_SCREEN_IDS: readonly ScreenId[] = [
   'data-compare',
   'sync-wizard',
   'migration-wizard',
+  'etl-wizard',
   'drift-detection',
   'backup-schedule-manager',
   'point-in-time-recovery',

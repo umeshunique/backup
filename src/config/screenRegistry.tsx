@@ -28,6 +28,7 @@ import { ProfilerPage } from '@/pages/ProfilerPage';
 import { SlowQueryAnalyzerPage } from '@/pages/SlowQueryAnalyzerPage';
 import { SyncWizard } from '@/components/sync-wizard';
 import { MigrationWizard } from '@/components/migration-wizard';
+import { EtlWizard } from '@/components/etl-wizard';
 import { ImportWizard } from '@/components/import-wizard';
 import { ExportWizard } from '@/components/export-wizard';
 import { ChangeScriptGenerator } from '@/components/change-script-generator';
@@ -276,6 +277,11 @@ export const SCREEN_COMPONENTS: Record<ScreenId, ReactNode> = {
   'migration-wizard': (
     <PageShell tabId="migration-wizard">
       <MigrationWizard />
+    </PageShell>
+  ),
+  'etl-wizard': (
+    <PageShell tabId="etl-wizard">
+      <EtlWizard />
     </PageShell>
   ),
   'import-wizard': (

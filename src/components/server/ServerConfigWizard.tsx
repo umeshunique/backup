@@ -399,6 +399,9 @@ export function ServerConfigWizard({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] p-0 overflow-hidden">
         <DialogTitle className="sr-only">{server ? 'Edit Server' : 'Add Server'}</DialogTitle>
+        <DialogDescription className="sr-only">
+          {server ? 'Edit database server connection settings.' : 'Add a new database server connection.'}
+        </DialogDescription>
         <div className="flex h-full">
           {/* Sidebar - Steps */}
           <div className="w-64 bg-muted/30 border-r p-4 hidden md:block">
@@ -765,6 +768,7 @@ export function ServerConfigWizard({
                                       <Input 
                                         placeholder="root" 
                                         className="pl-10 h-11"
+                                        autoComplete="username"
                                         {...field} 
                                       />
                                     </div>
@@ -787,6 +791,7 @@ export function ServerConfigWizard({
                                         type="password" 
                                         placeholder="••••••••" 
                                         className="pl-10 h-11"
+                                        autoComplete={server ? 'current-password' : 'new-password'}
                                         {...field} 
                                       />
                                     </div>

@@ -39,7 +39,8 @@ async function apiRequest<T>(
   }
 
   if (!response.ok) {
-    const message = (data as { message?: string }).message || text || `API request failed: ${response.statusText}`;
+    const d = data as { message?: string; error?: string };
+    const message = d.message || d.error || text || `API request failed: ${response.statusText}`;
     throw new Error(message);
   }
 
@@ -385,6 +386,56 @@ export const apiClient = {
         : result.message ?? 'OK';
     (this as { _onQueryExecuted?: (e: { action: string; message: string; durationMs: number }) => void })._onQueryExecuted?.({ action: actionSnippet, message, durationMs });
     return result;
+  },
+
+  /**
+   * Run ETL: extract from source (MySQL or MSSQL), load into target (MySQL or MSSQL).
+   * Same or different servers supported.
+   */
+  async runEtl(options: {
+    source: { host: string; port: number; user: string; password: string; type: string; database: string; table: string; customQuery?: string };
+    target: { host: string; port: number; user: string; password: string; type: string; database: string; table: string };
+    options?: {
+      mode?: 'etl' | 'elt';
+      transform?: { columnMap?: Record<string, string>; filter?: string; postLoadSql?: string };
+      batchSize?: number;
+      truncateFirst?: boolean;
+    };
+  }): Promise<{
+    success: boolean;
+    rowsExtracted: number;
+    rowsLoaded: number;
+    batches: number;
+    error?: string;
+    logs: string[];
+  }> {
+    return apiRequest('/api/etl/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        source: options.source,
+        target: options.target,
+        options: options.options ?? {},
+      }),
+    });
+  },
+
+  /**
+   * Get column names for a table (for Map Columns / Auto-map).
+   */
+  async getEtlTableColumns(connection: { host: string; port: number; user: string; password: string; type: string }, database: string, table: string): Promise<{ success: boolean; columns: string[]; error?: string }> {
+    const res = await apiRequest<{ success: boolean; columns?: string[]; error?: string }>('/api/etl/table-columns', {
+      method: 'POST',
+      body: JSON.stringify({ connection, database, table }),
+    });
+    return { success: res.success, columns: res.columns ?? [], error: res.error };
+  },
+
+  async getEtlTableRelations(connection: { host: string; port: number; user: string; password: string; type: string }, database: string, table: string): Promise<{ success: boolean; referencedBy: string[]; references: string[]; error?: string }> {
+    const res = await apiRequest<{ success: boolean; referencedBy?: string[]; references?: string[]; error?: string }>('/api/etl/table-relations', {
+      method: 'POST',
+      body: JSON.stringify({ connection, database, table }),
+    });
+    return { success: res.success, referencedBy: res.referencedBy ?? [], references: res.references ?? [], error: res.error };
   },
 
   // ==================== Schema Version Control ====================

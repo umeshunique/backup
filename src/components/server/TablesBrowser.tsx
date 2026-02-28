@@ -26,6 +26,7 @@ import { Table2, Plus, Edit, Eye, Search, RefreshCw, Database, ChevronLeft, Chev
 import { Checkbox } from '@/components/ui/checkbox';
 import { useBackupStore } from '@/store/backupStore';
 import { apiClient } from '@/services/apiClient';
+import { escapeIdentifier } from '@/utils/sqlIdentifier';
 import { TableEditor, type TableEditorAction } from './TableEditor';
 import { DataEditor } from './DataEditor';
 import { toast } from '@/hooks/use-toast';
@@ -119,6 +120,8 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
 
     try {
       const offset = (page - 1) * TABLE_DATA_PAGE_SIZE;
+      const dbType = server.databaseType;
+      const quotedTable = escapeIdentifier(table.name, dbType);
       if (page === 1) {
         const countResult = await apiClient.executeQuery({
           host: server.host,
@@ -127,7 +130,7 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
           password: server.password,
           database,
           type: server.databaseType,
-          query: `SELECT COUNT(*) AS total FROM \`${table.name}\``
+          query: `SELECT COUNT(*) AS total FROM ${quotedTable}`
         });
         if (countResult.success && countResult.rows?.[0]) {
           const total = Number((countResult.rows[0] as { total: number }).total);
@@ -137,6 +140,9 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
         }
       }
 
+      const dataQuery = dbType === 'mssql'
+        ? `SELECT * FROM ${quotedTable} ORDER BY (SELECT NULL) OFFSET ${offset} ROWS FETCH NEXT ${TABLE_DATA_PAGE_SIZE} ROWS ONLY`
+        : `SELECT * FROM ${quotedTable} LIMIT ${TABLE_DATA_PAGE_SIZE} OFFSET ${offset}`;
       const result = await apiClient.executeQuery({
         host: server.host,
         port: server.port,
@@ -144,7 +150,7 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
         password: server.password,
         database,
         type: server.databaseType,
-        query: `SELECT * FROM \`${table.name}\` LIMIT ${TABLE_DATA_PAGE_SIZE} OFFSET ${offset}`
+        query: dataQuery
       });
 
       if (result.success && result.rows) {
@@ -166,10 +172,19 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
     ? Math.min(tableDataPage * TABLE_DATA_PAGE_SIZE, tableDataTotal)
     : (tableData?.length ? paginationStart + tableData.length - 1 : paginationStart);
 
+  const dropTableSql = (tableName: string) => {
+    const quoted = escapeIdentifier(tableName, server.databaseType);
+    if (server.databaseType === 'mssql') {
+      return `IF OBJECT_ID('dbo.${tableName.replace(/'/g, "''")}', 'U') IS NOT NULL DROP TABLE dbo.${quoted}`;
+    }
+    return `DROP TABLE IF EXISTS ${quoted}`;
+  };
+
   const handleDeleteTable = async () => {
     if (!selectedTable) return;
 
     try {
+      const query = dropTableSql(selectedTable.name);
       await apiClient.executeQuery({
         host: server.host,
         port: server.port,
@@ -177,7 +192,7 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
         password: server.password,
         database,
         type: server.databaseType,
-        query: `DROP TABLE IF EXISTS \`${selectedTable.name}\``
+        query
       });
 
       toast({
@@ -210,6 +225,7 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
 
     try {
       for (const tableName of selectedTables) {
+        const query = dropTableSql(tableName);
         await apiClient.executeQuery({
           host: server.host,
           port: server.port,
@@ -217,7 +233,7 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
           password: server.password,
           database,
           type: server.databaseType,
-          query: `DROP TABLE IF EXISTS \`${tableName}\``
+          query
         });
       }
 
@@ -316,27 +332,28 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
     if (!rowToDelete || !selectedTable) return;
 
     try {
-      // Build WHERE clause
-      const pkColumns = selectedTable.columns?.filter(col => col.primaryKey);
+      const dbType = server.databaseType;
+      const esc = (n: string) => escapeIdentifier(n, dbType);
+      const pkColumns = selectedTable.columns?.filter(col => col.isPrimaryKey);
       const whereClause = pkColumns && pkColumns.length > 0
         ? pkColumns.map(col => {
             const value = rowToDelete[col.name];
-            if (value === null) return `\`${col.name}\` IS NULL`;
+            if (value === null) return `${esc(col.name)} IS NULL`;
             if (['INT', 'BIGINT', 'DECIMAL', 'FLOAT', 'DOUBLE'].includes(col.dataType)) {
-              return `\`${col.name}\` = ${value}`;
+              return `${esc(col.name)} = ${value}`;
             }
-            return `\`${col.name}\` = '${String(value).replace(/'/g, "''")}'`;
+            return `${esc(col.name)} = '${String(value).replace(/'/g, "''")}'`;
           }).join(' AND ')
         : selectedTable.columns?.map(col => {
             const value = rowToDelete[col.name];
-            if (value === null) return `\`${col.name}\` IS NULL`;
+            if (value === null) return `${esc(col.name)} IS NULL`;
             if (['INT', 'BIGINT', 'DECIMAL', 'FLOAT', 'DOUBLE'].includes(col.dataType)) {
-              return `\`${col.name}\` = ${value}`;
+              return `${esc(col.name)} = ${value}`;
             }
-            return `\`${col.name}\` = '${String(value).replace(/'/g, "''")}'`;
+            return `${esc(col.name)} = '${String(value).replace(/'/g, "''")}'`;
           }).join(' AND ');
 
-      const sql = `DELETE FROM \`${selectedTable.name}\` WHERE ${whereClause}`;
+      const sql = `DELETE FROM ${esc(selectedTable.name)} WHERE ${whereClause}`;
 
       await apiClient.executeQuery({
         host: server.host,
@@ -714,6 +731,7 @@ export function TablesBrowser({ server, database, initialTableName, onTableDataO
             <DataEditor
               table={selectedTable}
               row={editingRow}
+              databaseType={server.databaseType}
               onSave={handleSaveRow}
               onCancel={() => {
                 setShowDataEditorDialog(false);

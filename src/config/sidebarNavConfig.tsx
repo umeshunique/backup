@@ -69,6 +69,7 @@ export const DATABASE_SIDEBAR_ITEMS: NavItem[] = [
   { id: 'slow-query-analyzer', label: 'Slow Query', icon: Database },
   { id: 'schema-version-control', label: 'Schema Version', icon: Database },
   { id: 'data-compare', label: 'Data Compare', icon: Database },
+  { id: 'etl-wizard', label: 'ETL Wizard', icon: Database },
   { id: 'data-generator', label: 'Data Generator', icon: Database },
   { id: 'data-quality-rules', label: 'Data Quality', icon: Database },
 ];

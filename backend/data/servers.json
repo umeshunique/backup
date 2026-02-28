@@ -40,5 +40,47 @@
     "connectionStatus": "disconnected",
     "createdAt": "2026-02-04T11:07:05.346Z",
     "updatedAt": "2026-02-04T13:02:28.714Z"
+  },
+  {
+    "id": "server_1772122621985_fove6fc9s",
+    "name": "Voltuswave",
+    "environment": "development",
+    "host": "localhost",
+    "port": 3306,
+    "databaseType": "mysql",
+    "username": "admin",
+    "password": "Apple#123",
+    "isActive": true,
+    "connectionStatus": "disconnected",
+    "createdAt": "2026-02-26T16:17:01.985Z",
+    "updatedAt": "2026-02-26T16:17:01.985Z"
+  },
+  {
+    "id": "server_1772122668338_uj0a6hecm",
+    "name": "DEV",
+    "environment": "development",
+    "host": "voltusfreight-dev1.cx2gsaaem9zc.ap-south-1.rds.amazonaws.com",
+    "port": 3306,
+    "databaseType": "mysql",
+    "username": "admin",
+    "password": "Voltus#123",
+    "isActive": true,
+    "connectionStatus": "disconnected",
+    "createdAt": "2026-02-26T16:17:48.338Z",
+    "updatedAt": "2026-02-26T16:17:48.338Z"
+  },
+  {
+    "id": "server_1772177525323_di68cgacr",
+    "name": "mssql",
+    "environment": "staging",
+    "host": "localhost",
+    "port": 1433,
+    "databaseType": "mssql",
+    "username": "sa",
+    "password": "Apple#123",
+    "isActive": true,
+    "connectionStatus": "disconnected",
+    "createdAt": "2026-02-27T07:32:05.323Z",
+    "updatedAt": "2026-02-27T07:32:05.323Z"
   }
 ]

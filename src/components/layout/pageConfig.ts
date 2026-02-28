@@ -101,6 +101,7 @@ export const PAGE_META: Record<TabId, PageMeta> = {
   'data-compare': { title: 'Data Compare', description: 'Compare table data between source and target. Diff view, sync direction, and generate INSERT/UPDATE.', fullWidth: true },
   'sync-wizard': { title: 'Sync Wizard', description: 'Bidirectional sync: schema and/or data with conflict resolution and rollback.' },
   'migration-wizard': { title: 'Migration Wizard', description: 'Migrate database or subset: schema, data, users. Pre-check and post-verification.' },
+  'etl-wizard': { title: 'ETL Wizard', description: 'Universal ETL: extract from MySQL or MSSQL, load into MySQL or MSSQL. Same or different servers.' },
   'drift-detection': { title: 'Drift Detection', description: 'Scheduled drift checks across environments with alerts and baseline snapshots.' },
   // Backup & Recovery
   'backup-schedule-manager': { title: 'Backup Schedule Manager', description: 'Schedule recurring backups with retention policy and notification on failure.' },

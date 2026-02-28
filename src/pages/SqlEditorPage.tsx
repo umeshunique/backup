@@ -9,7 +9,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { Plus, X, GripVertical, ExternalLink } from 'lucide-react';
+import { Plus, X, GripVertical, ExternalLink, Database } from 'lucide-react';
 import { savePopoutPayload } from '@/pages/SqlEditorPopoutPage';
 
 export interface SqlEditorTab {
@@ -112,7 +112,7 @@ export function SqlEditorPage() {
     setSqlEditorInitialSql(null);
   }, [sqlEditorInitialSql, addTab, setSqlEditorInitialSql]);
 
-  if (!canRunQueries || !selectedServer || !selectedDatabaseName) return null;
+  const hasConnection = Boolean(canRunQueries && selectedServer && selectedDatabaseName);
 
   return (
     <div className="min-h-0 flex flex-col flex-1 w-full animate-fade-in" style={{ width: '100%', maxWidth: '100%' }}>
@@ -257,13 +257,27 @@ export function SqlEditorPage() {
               style={{ width: '100%', maxWidth: '100%' }}
             >
               <div className="h-full min-h-0 flex flex-col overflow-hidden flex-1 pt-1 pb-0 w-full" style={{ width: '100%', minWidth: '100%', maxWidth: '100%' }}>
-                <SqlEditor
-                  key={tab.id}
-                  server={selectedServer}
-                  database={selectedDatabaseName}
-                  value={tab.sql}
-                  onSqlChange={(sql) => updateTabSql(tab.id, sql)}
-                />
+                {hasConnection ? (
+                  <SqlEditor
+                    key={tab.id}
+                    server={selectedServer!}
+                    database={selectedDatabaseName!}
+                    value={tab.sql}
+                    onSqlChange={(sql) => updateTabSql(tab.id, sql)}
+                  />
+                ) : (
+                  <div className="flex-1 flex items-center justify-center min-h-0 bg-muted/20 rounded-md border border-dashed border-border">
+                    <div className="flex flex-col items-center gap-3 text-center px-6 py-8 max-w-sm">
+                      <div className="rounded-full bg-muted p-3">
+                        <Database className="h-8 w-8 text-muted-foreground" aria-hidden />
+                      </div>
+                      <p className="text-sm font-medium text-foreground">Select a connection</p>
+                      <p className="text-xs text-muted-foreground">
+                        Choose a server and database in the connection bar above to write and run queries.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </TabsContent>
           ))}

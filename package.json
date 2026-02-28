@@ -8,7 +8,9 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "backend": "cd backend && npm run dev",
+    "dev:all": "concurrently -n api,web -c blue,green \"npm run backend\" \"npm run dev\""
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -69,6 +71,7 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "concurrently": "^9.1.2",
     "@eslint/js": "^9.32.0",
     "@tailwindcss/typography": "^0.5.16",
     "@types/node": "^22.16.5",

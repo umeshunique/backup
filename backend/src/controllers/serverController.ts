@@ -1,10 +1,13 @@
 import { Request, Response } from 'express';
 import { readFile, writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { existsSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { config } from '../config/env.js';
 
-const DATA_DIR = join(process.cwd(), config.storage.dataPath);
+// Resolve data path relative to this file so it works regardless of process.cwd()
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = join(__dirname, '../../', config.storage.dataPath);
 const SERVERS_FILE = join(DATA_DIR, config.storage.serversFile);
 
 interface ServerConfig {
@@ -41,8 +44,18 @@ export class ServerController {
    */
   private async readServers(): Promise<ServerConfig[]> {
     await this.ensureDataFile();
-    const data = await readFile(SERVERS_FILE, 'utf-8');
-    return JSON.parse(data);
+    try {
+      const data = await readFile(SERVERS_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return [];
+      if (err instanceof SyntaxError) {
+        console.error('[serverController] Invalid JSON in', SERVERS_FILE, err.message);
+        return [];
+      }
+      throw err;
+    }
   }
 
   /**
@@ -64,6 +77,7 @@ export class ServerController {
         servers
       });
     } catch (error: any) {
+      console.error('[serverController] getAllServers error:', error?.message ?? error, 'path:', SERVERS_FILE);
       res.status(500).json({
         success: false,
         message: error.message || 'Failed to get servers'
